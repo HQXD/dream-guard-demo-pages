@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#121936" />
+    <title>梦境护卫队</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main class="phone-shell" aria-label="梦境护卫队游戏演示">
+      <section id="lobby" class="lobby-screen" aria-label="梦境大厅">
+        <div class="lobby-art" aria-hidden="true"></div>
+        <header class="topbar">
+          <button class="avatar-button" type="button" data-toast="档案功能将在后续版本开放" aria-label="查看玩家档案"><span class="avatar-sigil">D</span><i></i></button>
+          <div class="player-meta"><strong>守梦人 · 星河</strong><span>守城评级 12</span></div>
+          <div class="currencies" aria-label="当前资源"><span class="currency crystal">248</span><span class="currency coin">3,680</span></div>
+        </header>
+
+        <section class="chapter" aria-labelledby="chapterTitle">
+          <p>梦境裂隙 · 第一守望</p>
+          <h1 id="chapterTitle">月门防线</h1>
+          <span>第 01 章 · 裂隙回响</span>
+        </section>
+
+        <section class="squad-panel" aria-labelledby="squadTitle">
+          <div class="section-head"><div><p>当前队伍</p><h2 id="squadTitle">可派遣护卫</h2></div><button type="button" class="small-action" data-toast="护卫编队功能将在后续版本开放">编队</button></div>
+          <div class="hero-roster">
+            <article class="hero-card ember"><div class="portrait"><svg viewBox="0 0 48 48" aria-hidden="true"><path d="M24 4 34 17 29 17 37 29 27 27 24 43 19 28 10 30 18 18 13 18Z"/></svg></div><strong>炽羽</strong><span>爆燃守卫</span></article>
+            <article class="hero-card frost"><div class="portrait"><svg viewBox="0 0 48 48" aria-hidden="true"><path d="M24 4v40M7 14l34 20M7 34 41 14M13 6l22 36M35 6 13 42"/></svg></div><strong>霜铃</strong><span>凝霜术士</span></article>
+            <article class="hero-card kite"><div class="portrait"><svg viewBox="0 0 48 48" aria-hidden="true"><path d="M24 5 39 22 24 43 9 22Z M24 5v38M9 22h30"/></svg></div><strong>风筝</strong><span>裂风游侠</span></article>
+          </div>
+        </section>
+
+        <section class="rewards" aria-label="通关奖励"><div class="reward-title"><span>首领奖励</span><small>通关本关后开启</small></div><div class="chest-row"><div class="chest common"></div><div class="chest rare"></div><div class="chest epic"></div></div></section>
+        <button id="startBattle" class="start-button" type="button"><span class="button-sigil">◇</span><span>开始战斗<small>守卫月门防线</small></span><b>▶</b></button>
+        <nav class="bottom-nav" aria-label="大厅导航">
+          <button type="button" data-toast="商城功能将在后续版本开放"><span class="nav-icon shop"></span><b>补给</b></button>
+          <button type="button" data-toast="护卫图鉴功能将在后续版本开放"><span class="nav-icon heroes"></span><b>护卫</b></button>
+          <button class="active" type="button" data-toast="当前位于梦境大厅"><span class="nav-icon gate"></span><b>守望</b></button>
+          <button type="button" data-toast="公会功能将在后续版本开放"><span class="nav-icon guild"></span><b>联盟</b></button>
+        </nav>
+        <p id="lobbyToast" class="lobby-toast" role="status" aria-live="polite"></p>
+      </section>
+
+      <section id="battle" class="battle-screen" hidden aria-label="梦境守卫战场">
+        <div class="battle-stage">
+        <section class="hud" aria-label="战斗状态">
+          <div class="hud-row"><span id="waveLabel">第 1 / 7 波</span><span id="levelLabel">Lv.1</span></div>
+          <div class="bar-group"><div class="bar-label"><span>梦境经验</span><span id="xpText">0 / 28</span></div><div class="bar xp"><i id="xpBar"></i></div></div>
+        </section>
+        <canvas id="game" width="390" height="844" aria-label="竖屏战场：怪物正向城墙进攻"></canvas>
+        <section id="wallHealth" class="wall-health" aria-label="城墙生命"><div class="wall-health-label"><span>月门城墙</span><strong id="wallText">100 / 100</strong></div><div class="wall-health-track"><i id="wallBar"></i></div></section>
+        <div id="ultimateControls" class="ultimate-controls" aria-label="梦灵大招"></div>
+        <p id="battleFeedback" class="battle-feedback" role="status" aria-live="polite"></p>
+        <section class="debug-panel" aria-label="调试控制"><button id="xpDebug" type="button">+经验</button><button id="restartDebug" type="button">重开</button><span id="statusText" aria-live="polite">选择首位护卫</span></section>
+        </div>
+        <div id="tapeTray" class="tape-tray" aria-label="卡带暂存栏" hidden></div>
+        <div id="modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><div class="modal-card"><p id="modalKicker" class="kicker">梦境正在裂开</p><h1 id="modalTitle">选择首位护卫</h1><p id="modalDescription">每位护卫会自动攻击最接近城墙的敌人。</p><div id="choices" class="choices"></div></div></div>
+      </section>
+    </main>
+    <script src="game.js"></script>
+  </body>
+</html>
