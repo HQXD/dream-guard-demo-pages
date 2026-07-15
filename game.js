@@ -162,7 +162,11 @@ function showBattleFeedback(message) {
 function addHeroEnergy(hero, amount) {
   const wasReady=hero.energy>=hero.energyMax;
   hero.energy = Math.min(hero.energyMax, hero.energy + amount);
-  if(!wasReady&&hero.energy>=hero.energyMax){hero.energyReadyAnnounced=true;showBattleFeedback(`${GAME_CONFIG.heroes[hero.id].name} 能量已满，可释放大招`);}
+  if(!wasReady&&hero.energy>=hero.energyMax){
+    hero.energyReadyAnnounced=true;
+    const availability=ultimateAvailability(hero),suffix=availability.kind==='ready'?'可释放大招':availability.kind==='precast'?'可拖拽预设':availability.status==='待飞针'?'等待飞针':availability.status==='待目标'?'等待目标':'暂不可用';
+    showBattleFeedback(`${GAME_CONFIG.heroes[hero.id].name} 能量已满，${suffix}`);
+  }
   syncUltimateButtons();
 }
 function triggerAttackFeedback(hero) {
@@ -181,23 +185,52 @@ function canvasPointFromEvent(event) {
   const rect = canvas.getBoundingClientRect();
   return { x:(event.clientX-rect.left)*GAME_CONFIG.arena.width/rect.width, y:(event.clientY-rect.top)*GAME_CONFIG.arena.height/rect.height };
 }
-function pointInAimBounds(point) { return point.x >= AIM_BOUNDS.left && point.x <= AIM_BOUNDS.right && point.y >= AIM_BOUNDS.top && point.y <= AIM_BOUNDS.bottom; }
-function pointInAimCancel(point) { return point.x >= AIM_BOUNDS.cancel.left && point.x <= AIM_BOUNDS.cancel.right && point.y >= AIM_BOUNDS.cancel.top && point.y <= AIM_BOUNDS.cancel.bottom; }
+function pointInAimBounds(point) { return Boolean(point) && point.x >= AIM_BOUNDS.left && point.x <= AIM_BOUNDS.right && point.y >= AIM_BOUNDS.top && point.y <= AIM_BOUNDS.bottom; }
+function pointInAimCancel(point) { return Boolean(point) && point.x >= AIM_BOUNDS.cancel.left && point.x <= AIM_BOUNDS.cancel.right && point.y >= AIM_BOUNDS.cancel.top && point.y <= AIM_BOUNDS.cancel.bottom; }
 function clampAimPoint(point) { return {x:Math.max(AIM_BOUNDS.left,Math.min(AIM_BOUNDS.right,point.x)),y:Math.max(AIM_BOUNDS.top,Math.min(AIM_BOUNDS.bottom,point.y))}; }
 function ultimateKind(hero) { return hero.id === 'guanyu' ? 'lane' : hero.id === 'arthur' || hero.id === 'monk' ? 'point' : 'auto'; }
-function ultimateBlockReason(hero, allowPaused=false) {
-  const spec = GAME_CONFIG.heroes[hero.id];
-  if (!state || state.ended || state.modalKind || (!state.running && !allowPaused)) return '战斗暂停，暂不可释放';
-  if (!isFormalHeroId(hero.id) || hero.energy < hero.energyMax) return `${spec.ultimate}：能量未满`;
+function activeUltimateWave() {
+  return Boolean(state && !state.ended && !state.modalKind && state.running && !state.waveClearPending && !state.pendingVictory && GAME_CONFIG.waves[state.wave] && (state.enemies.length || state.spawnQueue.length));
+}
+function emptySpawnGap() { return activeUltimateWave() && !state.enemies.length && state.spawnQueue.length > 0; }
+function plantedPrincessNeedles() { return state?.needles?.filter(needle=>needle.hero==='princess'&&needle.state==='planted'&&(needle.life??0)>0) || []; }
+function ultimateBlockReason(hero, options={}) {
+  const {allowManualAim=false,manual=false}=typeof options==='object'&&options?options:{};
+  const spec = GAME_CONFIG.heroes[hero?.id];
+  if (!state || state.ended || state.modalKind) return '战斗暂停，暂不可释放';
   if (state.tapeInteraction) return '请先完成卡带操作';
+  if (!state.running) return '战斗暂停，暂不可释放';
+  if (state.waveClearPending || state.pendingVictory || !GAME_CONFIG.waves[state.wave] || (!state.enemies.length && !state.spawnQueue.length)) return '本波已清空，暂不可释放';
+  if (!spec || !isFormalHeroId(hero.id)) return '该梦灵暂不可释放大招';
+  if (hero.energy < hero.energyMax) return `${spec.ultimate}：能量未满`;
   if (hero.id === 'laser' && hero.laserUlt > 0) return '镭爆时间仍在持续中';
   if (hero.id === 'princess' && state.needles.some(needle=>needle.hero==='princess'&&needle.state==='returning')) return '穿针引线仍在收回中';
-  if (hero.id === 'princess' && !state.needles.some(needle=>needle.hero==='princess'&&needle.state==='planted')) return '尚无可收回飞针';
+  if (hero.id === 'princess' && !plantedPrincessNeedles().length) return '尚无可收回飞针';
   if (hero.id === 'arthur' && state.arthurShield) return '圣盾仍在场';
   if (hero.id === 'guanyu' && state.cars.some(car=>car.giant)) return '巨轮车队仍在行进';
   if (hero.id === 'monk' && state.superMonks.length) return '超级木鱼仍在场';
-  const hasTarget = hero.id === 'laser' ? Boolean(findLaserTarget(hero)) : hero.id === 'princess' ? true : hero.id === 'arthur' ? Boolean(findArthurTarget(hero,560)) : hero.id === 'monk' ? Boolean(monkTarget(hero,620)) : state.enemies.length > 0;
-  return hasTarget ? '' : '暂无可释放目标';
+  if (hero.id === 'laser') return findLaserTarget(hero) ? '' : '暂无可锁定目标';
+  if (hero.id === 'princess') return '';
+  if (hero.id === 'guanyu') {
+    if (state.enemies.length) return '';
+    return emptySpawnGap() && (allowManualAim || manual) ? '' : '暂无敌军，请拖拽选择车道预先出击';
+  }
+  if (hero.id === 'arthur' || hero.id === 'monk') {
+    const hasTarget=hero.id==='arthur'?Boolean(findArthurTarget(hero,560)):Boolean(monkTarget(hero,620));
+    if (hasTarget) return '';
+    if (emptySpawnGap()) return allowManualAim || manual ? '' : '暂无密集目标，请拖拽指定落点';
+    return '暂无可释放目标';
+  }
+  return '暂无可释放目标';
+}
+function ultimateAvailability(hero) {
+  if (!hero || hero.energy < hero.energyMax) return {kind:'charging',status:'蓄能中'};
+  const immediateReason=ultimateBlockReason(hero);
+  if (!immediateReason) return {kind:'ready',status:'可释放'};
+  if (ultimateKind(hero)!=='auto' && !ultimateBlockReason(hero,{allowManualAim:true})) return {kind:'precast',status:'拖拽预设'};
+  if (hero.id==='princess' && immediateReason==='尚无可收回飞针') return {kind:'waiting',status:'待飞针',reason:immediateReason};
+  if (['暂无可锁定目标','暂无可释放目标','暂无敌军，请拖拽选择车道预先出击','暂无密集目标，请拖拽指定落点'].includes(immediateReason)) return {kind:'waiting',status:'待目标',reason:immediateReason};
+  return {kind:'blocked',status:'暂不可用',reason:immediateReason};
 }
 function bestMonkPoint(hero) {
   const x=heroX(hero),y=711,candidates=state.enemies.filter(e=>Math.hypot(e.x-x,e.y-y)<=620);
@@ -216,13 +249,18 @@ function guanyuFleetPlan(hero, preferredLane=null) {
   if (preferredLane !== null && preferredLane !== undefined) { const at=lanes.indexOf(preferredLane); if(at>0) lanes.splice(at,1),lanes.unshift(preferredLane); }
   return {seed,count,lanes:lanes.slice(0,count),preferredLane};
 }
+function restoreUltimateAimRunning(aim) {
+  if (!state || !aim?.wasRunning || state.ended || state.modalKind || state.tapeInteraction || state.waveClearPending || state.pendingVictory || !GAME_CONFIG.waves[state.wave] || (!state.enemies.length && !state.spawnQueue.length)) return false;
+  state.running=true;
+  return true;
+}
 function endUltimateAim(reason='', feedback=false) {
   const aim=state?.ultimateAimInteraction;
   if (!aim) return;
   state.ultimateAimInteraction=null;
   try { aim.button?.releasePointerCapture?.(aim.pointerId); } catch (_) {}
   ui.tapeTray?.classList.remove('aim-locked');
-  if (!state.ended && !state.modalKind && !state.tapeInteraction) state.running=aim.wasRunning;
+  restoreUltimateAimRunning(aim);
   syncUltimateButtons();
   if (feedback && reason) showBattleFeedback(reason);
 }
@@ -233,29 +271,39 @@ function updateUltimateAimPreview(aim, event) {
 }
 function beginUltimatePointer(event, hero, button) {
   if (!state || state.ended || state.tapeInteraction || state.ultimateAimInteraction || !event.isPrimary || (event.button !== undefined && event.button !== 0)) return;
-  const reason=ultimateBlockReason(hero); if(reason){showBattleFeedback(reason);return;}
+  const reason=ultimateBlockReason(hero,{allowManualAim:true}); if(reason){showBattleFeedback(reason);return;}
   event.preventDefault(); try { button.setPointerCapture?.(event.pointerId); } catch (_) {}
   const kind=ultimateKind(hero), startClient={x:event.clientX,y:event.clientY}, aim={heroId:hero.id,kind,pointerId:event.pointerId,button,startClient,moved:false,wasRunning:state.running,preview:null};
-  if(kind==='point') aim.preview={point:hero.id==='arthur'?bestShieldPoint(hero):bestMonkPoint(hero),valid:true};
+  if(kind==='point'){const point=hero.id==='arthur'?bestShieldPoint(hero):bestMonkPoint(hero);aim.preview={point,valid:pointInAimBounds(point)};}
   if(kind==='lane') aim.preview={laneIndex:guanyuAutoLane()};
   state.ultimateAimInteraction=aim; ui.tapeTray?.classList.add('aim-locked');
   if(kind!=='auto'){state.running=false;button.classList.add('aiming');button.textContent=`${GAME_CONFIG.heroes[hero.id].professionLabel}｜瞄准中\n${GAME_CONFIG.heroes[hero.id].ultimate}`;}
-  const move=ev=>{if(state?.ultimateAimInteraction!==aim||ev.pointerId!==aim.pointerId)return;const delta=Math.hypot(ev.clientX-aim.startClient.x,ev.clientY-aim.startClient.y);if(delta>=8)aim.moved=true;if(aim.moved&&kind!=='auto')updateUltimateAimPreview(aim,ev);};
+  const move=ev=>{if(state?.ultimateAimInteraction!==aim||ev.pointerId!==aim.pointerId)return;const dx=ev.clientX-aim.startClient.x,dy=ev.clientY-aim.startClient.y,delta=kind==='lane'?Math.abs(dx):Math.hypot(dx,dy);if(delta>=8)aim.moved=true;if(aim.moved&&kind!=='auto')updateUltimateAimPreview(aim,ev);};
   const cancel=ev=>{if(ev?.pointerId!==undefined&&ev.pointerId!==aim.pointerId)return;button.removeEventListener('pointermove',move);if(state?.ultimateAimInteraction===aim)endUltimateAim(kind==='auto'&&aim.moved?'拖动已取消':'已取消瞄准',false);};
   const release=()=>{if(state?.ultimateAimInteraction===aim)state.ultimateAimInteraction=null;try{button.releasePointerCapture?.(aim.pointerId);}catch(_){}ui.tapeTray?.classList.remove('aim-locked');};
-  const up=ev=>{if(ev.pointerId!==aim.pointerId||state?.ultimateAimInteraction!==aim)return;button.removeEventListener('pointermove',move);if(kind==='auto'){if(aim.moved){endUltimateAim('拖动已取消',true);return;}release();useUltimate(hero);return;}const raw=aim.moved?aim.raw:null;if(raw&&pointInAimCancel(raw)){endUltimateAim('已取消瞄准',false);return;}const payload=kind==='lane'?{laneIndex:aim.preview?.laneIndex}:{point:aim.moved?raw:aim.preview?.point};if(kind==='point'&&!pointInAimBounds(payload.point)){endUltimateAim('目标区域外，未释放',true);return;}const wasRunning=aim.wasRunning;release();state.running=wasRunning;syncUltimateButtons();useUltimate(hero,payload);};
+  const up=ev=>{if(ev.pointerId!==aim.pointerId||state?.ultimateAimInteraction!==aim)return;button.removeEventListener('pointermove',move);const dx=ev.clientX-aim.startClient.x,dy=ev.clientY-aim.startClient.y,delta=kind==='lane'?Math.abs(dx):Math.hypot(dx,dy);if(delta>=8)aim.moved=true;if(kind==='auto'){if(aim.moved){endUltimateAim('拖动已取消',true);return;}release();useUltimate(hero);return;}if(aim.moved)updateUltimateAimPreview(aim,ev);const raw=aim.moved?aim.raw:null;if(raw&&pointInAimCancel(raw)){endUltimateAim('已取消瞄准',false);return;}const payload=kind==='lane'?{laneIndex:aim.preview?.laneIndex,manual:aim.moved}:{point:aim.moved?raw:aim.preview?.point,manual:aim.moved};if(kind==='point'&&payload.point&&!pointInAimBounds(payload.point)){endUltimateAim('目标区域外，未释放',true);return;}release();restoreUltimateAimRunning(aim);syncUltimateButtons();useUltimate(hero,payload);};
   button.addEventListener('pointermove',move);button.addEventListener('pointerup',up,{once:true});button.addEventListener('pointercancel',cancel,{once:true});button.addEventListener('lostpointercapture',cancel,{once:true});
+}
+function applyUltimateButtonState(button, hero, index) {
+  const spec=GAME_CONFIG.heroes[hero.id],availability=ultimateAvailability(hero),aiming=state.ultimateAimInteraction?.heroId===hero.id;
+  const tapeClasses=String(button.className||'').split(/\s+/).filter(name=>name==='tape-valid'||name==='tape-invalid');
+  button.className=['ultimate-button',availability.kind!=='charging'?availability.kind:'',aiming?'aiming':'',...tapeClasses].filter(Boolean).join(' ');
+  button.style.gridColumn=String(index+1);button.style.setProperty('--ready-phase',String(((state.uiTime||0)%0.8)/0.8));
+  button.setAttribute('aria-label',`${spec.name}·${spec.professionLabel}·${spec.ultimate}，能量 ${Math.floor(hero.energy)}/100，${aiming?'瞄准中':availability.status}`);
+  button.textContent=aiming?`${spec.professionLabel}｜瞄准中\n${spec.ultimate}`:availability.kind==='charging'?`${spec.professionLabel}｜${Math.floor(hero.energy)}/100\n${spec.ultimate}`:`能量满·${availability.status}\n${spec.ultimate}`;
+}
+function refreshUltimateButtons() {
+  if (!state || !ui.ultimateControls) return;
+  const buttons=[...(ui.ultimateControls.children||[])];
+  if (buttons.length!==state.heroes.length) { syncUltimateButtons(); return; }
+  buttons.forEach((button,index)=>applyUltimateButtonState(button,state.heroes[index],index));
 }
 function syncUltimateButtons() {
   if (!state || !ui.ultimateControls) return;
   ui.ultimateControls.replaceChildren();
   state.heroes.forEach((hero, index) => {
-    const spec = GAME_CONFIG.heroes[hero.id], button = document.createElement('button'), ready = hero.energy >= hero.energyMax;
-    const aiming=state.ultimateAimInteraction?.heroId===hero.id;
-    button.type = 'button'; button.className = `ultimate-button${ready ? ' ready' : ''}${aiming ? ' aiming' : ''}`;
-    button.style.gridColumn = String(index + 1); button.style.setProperty('--ready-phase', String(((state.uiTime||0)%0.8)/0.8)); button.setAttribute('aria-label', `${spec.name}·${spec.professionLabel}·${spec.ultimate}，能量 ${Math.floor(hero.energy)}/100`);
-    button.textContent = ready ? `${spec.professionLabel}｜可释放\n${spec.ultimate}` : `${spec.professionLabel}｜${Math.floor(hero.energy)}/100\n${spec.ultimate}`;
-    if (aiming) button.textContent = `${spec.professionLabel}｜瞄准中\n${spec.ultimate}`;
+    const button = document.createElement('button');
+    button.type = 'button'; applyUltimateButtonState(button,hero,index);
     button.addEventListener('pointerdown', event => {
       if (state.ultimateAimInteraction) return;
       const tape=state.tapeInteraction?.tape;
@@ -277,32 +325,38 @@ function closestWallEnemy() { return [...state.enemies].sort((a,b) => b.y - a.y)
 function hasAttackingEnemy() { return state.enemies.some(e => e.y + GAME_CONFIG.enemies[e.id].radius >= GAME_CONFIG.arena.wallY - 10); }
 function useUltimate(hero, payload = null) {
   ui.tapeTray?.classList.remove('aim-locked');
-  const spec = GAME_CONFIG.heroes[hero.id], mods = hero.mods || defaultMods();
-  if (!state.running || state.ended || state.modalKind) return showBattleFeedback('战斗暂停，暂不可释放');
-  if (hero.energy < hero.energyMax) return showBattleFeedback(`${spec.ultimate}：能量未满`);
-  if (hero.id === 'laser' && hero.laserUlt > 0) return showBattleFeedback('镭爆时间仍在持续中');
-  if (hero.id === 'princess' && state.needles.some(needle=>needle.hero==='princess'&&needle.state==='returning')) return showBattleFeedback('穿针引线仍在收回中');
-  if (hero.id === 'princess' && !state.needles.some(needle=>needle.hero==='princess'&&needle.state==='planted')) return showBattleFeedback('尚无可收回飞针');
-  if (hero.id === 'arthur' && state.arthurShield) return showBattleFeedback('圣盾仍在场');
-  if (hero.id === 'guanyu' && state.cars.some(car=>car.giant)) return showBattleFeedback('巨轮车队仍在行进');
-  if(hero.id==='monk'&&state.superMonks.length)return showBattleFeedback('超级木鱼仍在场');
-  const hasTarget = hero.id === 'laser' ? Boolean(findLaserTarget(hero)) : hero.id === 'princess' ? true : hero.id === 'arthur' ? Boolean(findArthurTarget(hero,560)) : hero.id==='monk'?Boolean(monkTarget(hero,620)):state.enemies.length > 0;
-  const rockValid = state.wallHp < state.wallMax || state.wallShield <= 0 || hasAttackingEnemy();
-  if ((hero.id !== 'rock' && !hasTarget) || (hero.id === 'rock' && !rockValid)) return showBattleFeedback(hero.id === 'rock' ? '城垣完好，暂无可释放时机' : '暂无可释放目标');
-  if (payload?.point && !pointInAimBounds(payload.point)) return showBattleFeedback('目标区域外，未释放');
+  const spec = GAME_CONFIG.heroes[hero?.id], mods = hero?.mods || defaultMods(), manual=Boolean(payload?.manual);
+  const reason=ultimateBlockReason(hero,{manual});
+  if (reason) return showBattleFeedback(reason);
+
+  let point=null,laneIndex=null,needles=null,laserTarget=null;
+  if (hero.id==='monk' || hero.id==='arthur') {
+    point=payload?.point || (hero.id==='arthur'?bestShieldPoint(hero):bestMonkPoint(hero));
+    if (!point) return showBattleFeedback('暂无密集目标，请拖拽指定落点');
+    if (!pointInAimBounds(point)) return showBattleFeedback('目标区域外，未释放');
+  } else if (hero.id==='guanyu') {
+    laneIndex=payload?.laneIndex ?? guanyuAutoLane();
+    if (!Number.isInteger(laneIndex) || laneIndex<0 || laneIndex>=ULTIMATE_LANES.length) return showBattleFeedback('暂无敌军，请拖拽选择车道预先出击');
+  } else if (hero.id==='princess') {
+    needles=plantedPrincessNeedles();
+    if (!needles.length) return showBattleFeedback('尚无可收回飞针');
+  } else if (hero.id==='laser') {
+    laserTarget=findLaserTarget(hero);
+    if (!laserTarget) return showBattleFeedback('暂无可锁定目标');
+  }
   hero.energy = 0; hero.energyReadyAnnounced=false; syncUltimateButtons(); showBattleFeedback(`释放：${spec.ultimate}`);
   if(hero.id==='monk'){
-    const p=payload?.point||bestMonkPoint(hero),m=mods;if(!p){hero.energy=hero.energyMax;syncUltimateButtons();return false;}state.superMonks.push({hero:'monk',x:heroX(hero),y:711,tx:p.x,ty:p.y,arrived:false,pulses:0,time:0,damage:(45+(m.monkPathDamage||0))*(1+m.ultPower)*(1+.2*(hero.monkFieldStacks||0)),radius:120+(m.monkBindRadius||0)+18*(hero.monkFieldStacks||0)});
+    const m=mods;state.superMonks.push({hero:'monk',x:heroX(hero),y:711,tx:point.x,ty:point.y,arrived:false,pulses:0,time:0,damage:(45+(m.monkPathDamage||0))*(1+m.ultPower)*(1+.2*(hero.monkFieldStacks||0)),radius:120+(m.monkBindRadius||0)+18*(hero.monkFieldStacks||0)});
   } else if (hero.id === 'guanyu') {
-    if(!launchGuanyuFleet(hero,payload?.laneIndex)){hero.energy=hero.energyMax;syncUltimateButtons();return false;}
+    launchGuanyuFleet(hero,laneIndex);
   } else if (hero.id === 'arthur') {
-    const point=payload?.point||bestShieldPoint(hero),m=mods,base=120+(m.arthurShieldHp||0)+30*(hero.arthurGuardStacks||0),power=Math.max(.5,Math.min(2,1+(m.ultPower||0)));if(!point){hero.energy=hero.energyMax;syncUltimateButtons();return false;}state.arthurShield={hero, x:point.x,y:point.y,hp:Math.floor(base*power),maxHp:Math.floor(base*power),time:6+(m.arthurShieldTime||0)+.5*(hero.arthurGuardStacks||0),taunted:new Set(),tick:0,retaliateCd:0,retaliations:0};showBattleFeedback('圣盾号令 · 诱敌');
+    const m=mods,base=120+(m.arthurShieldHp||0)+30*(hero.arthurGuardStacks||0),power=Math.max(.5,Math.min(2,1+(m.ultPower||0)));state.arthurShield={hero, x:point.x,y:point.y,hp:Math.floor(base*power),maxHp:Math.floor(base*power),time:6+(m.arthurShieldTime||0)+.5*(hero.arthurGuardStacks||0),taunted:new Set(),tick:0,retaliateCd:0,retaliations:0};showBattleFeedback('圣盾号令 · 诱敌');
   } else if (hero.id === 'princess') {
     hero.returnCast=(hero.returnCast||0)+1;hero.returnCounts=new Map();
-    state.needles.filter(needle=>needle.hero==='princess'&&needle.state==='planted').forEach(needle=>{needle.state='returning';needle.returnCast=hero.returnCast;needle.returnHits=new Set();});
+    needles.forEach(needle=>{needle.state='returning';needle.returnCast=hero.returnCast;needle.returnHits=new Set();});
     showBattleFeedback('穿针引线 · 飞针回收');
   } else if (hero.id === 'laser') {
-    hero.laserUlt = 5; hero.ultimateFlash=.2; hero.ultimateFlashTarget=findLaserTarget(hero);
+    hero.laserUlt = 5; hero.ultimateFlash=.2; hero.ultimateFlashTarget=laserTarget;
     showBattleFeedback('镭爆时间 · 5.0秒');
   } else if (hero.id === 'ember') {
     const center = closestWallEnemy(), radius = 110; areaDamage(center.x, center.y, radius, (160 + mods.emberDamage) * (1+mods.ultPower), '焚天坠羽');
@@ -568,7 +622,7 @@ function update(dt) {
   for(const f of [...state.tapeFlying]){f.time-=dt;if(f.time<=0){remove(state.tapeFlying,f);storeTape(f.tape);}}
   const draining=state.overflowDraining;
   if(draining){draining.time-=dt;if(draining.time<=0){if(state.tapeOverflowQueue[0]===draining.tape&&state.tapeTray.length<TAPE_TRAY_CAPACITY){state.tapeOverflowQueue.shift();state.tapeTray.push(draining.tape);}state.overflowDraining=null;fillTapeTray();}}
-  if (!state.running) return;
+  if (!state.running) { refreshUltimateButtons(); return; }
   state.elapsed += dt;
   const wave = GAME_CONFIG.waves[state.wave];
   state.spawnTimer -= dt;
@@ -616,7 +670,7 @@ function updateEnemies(dt) {
   }
 }
 function findArthurTarget(hero,range=320){const x=heroX(hero),y=711;return state.enemies.filter(e=>Math.hypot(e.x-x,e.y-y)<=range).sort((a,b)=>(b.y-a.y)||(Math.hypot(a.x-x,a.y-y)-Math.hypot(b.x-x,b.y-y))||((a.spawnOrder||0)-(b.spawnOrder||0)))[0]||null;}
-function bestShieldPoint(hero){const x=heroX(hero),y=711,candidates=state.enemies.filter(e=>Math.hypot(e.x-x,e.y-y)<=560);let best=null,bestCount=-1;for(const e of candidates){const count=state.enemies.filter(o=>Math.hypot(o.x-e.x,o.y-e.y)<=120).length;if(!best||count>bestCount||(count===bestCount&&(e.y>best.y||(e.y===best.y&&(e.spawnOrder||0)<(best.spawnOrder||0))))){best=e;bestCount=count;}}return {x:Math.max(48,Math.min(342,best.x)),y:Math.max(48,Math.min(555,best.y))};}
+function bestShieldPoint(hero){const x=heroX(hero),y=711,candidates=state.enemies.filter(e=>Math.hypot(e.x-x,e.y-y)<=560);let best=null,bestCount=-1;for(const e of candidates){const count=state.enemies.filter(o=>Math.hypot(o.x-e.x,o.y-e.y)<=120).length;if(!best||count>bestCount||(count===bestCount&&(e.y>best.y||(e.y===best.y&&(e.spawnOrder||0)<(best.spawnOrder||0))))){best=e;bestCount=count;}}return best?{x:Math.max(48,Math.min(342,best.x)),y:Math.max(48,Math.min(555,best.y))}:null;}
 function launchBlade(hero,tx,ty,retaliate=false){if(!retaliate&&state.blades.filter(b=>!b.retaliate).length>=8)return false;const x=heroX(hero),y=711,dx=tx-x,dy=ty-y,d=Math.hypot(dx,dy)||1,m=hero.mods||defaultMods(),dist=300+35*(hero.arthurEdgeStacks||0),width=96+12*(hero.arthurEdgeStacks||0),damage=16*state.global.damage*(1+m.damage+.2*(hero.arthurMarkStacks||0))*(retaliate?.8:1)*(retaliate?(1+.25*(hero.arthurRevengeStacks||0)):1);state.blades.push({hero:'arthur',x,y,vx:dx/d*800,vy:dy/d*800,distance:0,maxDistance:dist,width,damage,retaliate,hits:new Set(),energyGranted:false,crit:!retaliate&&Math.random()<(state.global.crit||0)});triggerAttackFeedback(hero);return true;}
 function updateBlades(dt){for(const blade of [...state.blades]){const ax=blade.x,ay=blade.y,remaining=blade.maxDistance-blade.distance,step=Math.min(800*dt,remaining),bx=ax+blade.vx/800*step,by=ay+blade.vy/800*step;for(const enemy of state.enemies.filter(e=>!blade.hits.has(e)).map(e=>({e,t:segmentHitT(ax,ay,bx,by,e.x,e.y,GAME_CONFIG.enemies[e.id].radius+blade.width/2)})).filter(v=>v.t!==null).sort((a,b)=>a.t-b.t)){blade.hits.add(enemy.e);const damage=blade.damage*(blade.crit?2:1),ok=damageEnemy(enemy.e,damage,blade.crit?'暴击':'刀气');if(ok&&!blade.retaliate&&!blade.energyGranted){const hero=state.heroes.find(h=>h.id==='arthur');primaryEnergy(hero,GAME_CONFIG.heroes.arthur,hero.mods||defaultMods());blade.energyGranted=true;}}blade.x=bx;blade.y=by;blade.distance+=step;if(blade.distance>=blade.maxDistance)remove(state.blades,blade);}}
 function damageArthurShield(damage,enemy){const shield=state.arthurShield;if(!shield)return;const actual=Math.min(shield.hp,damage);shield.hp-=actual;if(actual>0&&shield.retaliateCd<=0&&shield.retaliations<Math.min(12,8+2*(shield.hero.arthurRevengeStacks||0))){launchBlade(shield.hero,shield.x,shield.y,true);shield.retaliateCd=.4;shield.retaliations++;shield.hero.cooldown=attackInterval(shield.hero,GAME_CONFIG.heroes.arthur);state.effects.push({text:'反击',x:shield.x,y:shield.y-20,life:.4,color:'#ffcb76'});}if(shield.hp<=0)state.arthurShield=null;}
@@ -846,6 +900,7 @@ function finish(title, desc, victory) {
   if(state?.ultimateAimInteraction)endUltimateAim();
   if(state?.tapeInteraction)finishTapeInteraction(state.tapeInteraction,{resume:false});
   const uninstalled=(state.tapeTray?.length||0)+(state.tapeOverflowQueue?.length||0)+(state.tapeFlying?.length||0)+(state.tapeDrop?1:0)+(state.tapeQueue?.length||0); state.running = false; state.ended = true; state.ultimates = []; state.heroes.forEach(hero=>{if(hero.id==='laser'){hero.laserUlt=0;hero.laserBeam=null;}}); state.shots = state.shots.filter(shot => !shot.ultimate); state.needles=[];state.blades=[];state.cars=[];state.monkFish=[];state.scriptures=[];state.superMonks=[];state.arthurShield=null; state.tapeDrop=null; state.tapeQueue=[]; state.pendingTape=null; state.tapeTray=[];state.tapeOverflowQueue=[];state.tapeFlying=[];state.overflowDraining=null;state.tapeInteraction=null;clearAllTapeGhosts();clearTapeTargetMarks();ui.tapeTray.hidden=true;ui.tapeTray.replaceChildren();state.modalKind='result'; ui.modal.classList.remove('hidden');
+  refreshUltimateButtons();
   ui.kicker.textContent = victory ? '梦境恢复安宁' : '城墙已经失守'; ui.title.textContent = title; ui.desc.textContent = `${desc}｜未装备卡带 ${uninstalled} 盘`;
   ui.choices.replaceChildren(); ui.choices.classList.remove('portrait-choices'); ui.choices.classList.add('finish-actions');
   const again = document.createElement('button'); again.type='button'; again.className='choice'; again.style.setProperty('--card-color', victory ? '#70d489' : '#ef6e57'); again.innerHTML = `<span class="choice-icon">${choiceIconSvg(victory ? 'star' : 'repair')}</span><span><strong>再次守卫</strong><small>本局击败 ${state.kills} 个噩梦</small></span>`; again.onclick = restart;
@@ -855,7 +910,7 @@ function finish(title, desc, victory) {
 function win() { finish('第七波已清剿！', `你守住了梦境城墙，击败 ${state.kills} 个噩梦。`, true); }
 function lose() { finish('梦境防线失守', `你在第 ${state.wave + 1} 波止步；调整祝福再试一次。`, false); }
 function restart() { if (mode !== 'battle') return; if(state?.ultimateAimInteraction)endUltimateAim(); if(state?.tapeInteraction)finishTapeInteraction(state.tapeInteraction,{resume:false}); cancelAnimationFrame(raf); clearAllTapeGhosts(); clearTapeTargetMarks(); ui.tapeTray.hidden=true;ui.tapeTray.replaceChildren(); ui.choices.classList.remove('finish-actions'); ui.ultimateControls.replaceChildren(); state = newState(); showChoices('hero'); render(); updateUi(); raf = requestAnimationFrame(loop); }
-function updateUi() { const need = xpNeed(), wallRatio = state.wallHp / state.wallMax; ui.wave.textContent = `第 ${Math.min(state.wave + 1, 7)} / 7 波`; ui.level.textContent = `Lv.${state.level}`; ui.wallText.textContent = `${Math.ceil(state.wallHp)} / ${state.wallMax}`; ui.wallBar.style.width = `${100*wallRatio}%`; ui.wallHealth.classList.toggle('danger', wallRatio <= .3); ui.xpText.textContent = `${Math.floor(state.xp)} / ${need}`; ui.xpBar.style.width = `${100*state.xp/need}%`; }
+function updateUi() { const need = xpNeed(), wallRatio = state.wallHp / state.wallMax; ui.wave.textContent = `第 ${Math.min(state.wave + 1, 7)} / 7 波`; ui.level.textContent = `Lv.${state.level}`; ui.wallText.textContent = `${Math.ceil(state.wallHp)} / ${state.wallMax}`; ui.wallBar.style.width = `${100*wallRatio}%`; ui.wallHealth.classList.toggle('danger', wallRatio <= .3); ui.xpText.textContent = `${Math.floor(state.xp)} / ${need}`; ui.xpBar.style.width = `${100*state.xp/need}%`; refreshUltimateButtons(); }
 function render() {
   const { width:w, height:h, wallY } = GAME_CONFIG.arena; ctx.clearRect(0,0,w,h);
   const sky=ctx.createLinearGradient(0,0,0,h); sky.addColorStop(0,'#31305b'); sky.addColorStop(.26,'#242951'); sky.addColorStop(.82,'#151b39'); sky.addColorStop(1,'#0b1027'); ctx.fillStyle=sky; ctx.fillRect(0,0,w,h);
@@ -902,16 +957,16 @@ function drawHeroes(){
   drawUltimateAim();
   const cardY=707,colors={blue:'#75b8ef',purple:'#bd83ef',orange:'#f3cf67'};
   for(const hero of state.heroes){
-    const h=GAME_CONFIG.heroes[hero.id],x=heroX(hero),ratio=hero.energy/hero.energyMax,ready=hero.energy>=hero.energyMax,laserActive=hero.id==='laser'&&hero.laserUlt>0,aiming=state.ultimateAimInteraction?.heroId===hero.id;
-    const pulse=ready&&!aiming&&!prefersReducedMotion()?(.58+.42*((Math.cos((state.uiTime||0)*Math.PI*2/.8)+1)/2)):1;
+    const h=GAME_CONFIG.heroes[hero.id],x=heroX(hero),ratio=hero.energy/hero.energyMax,availability=ultimateAvailability(hero),charged=hero.energy>=hero.energyMax,ready=availability.kind==='ready',precast=availability.kind==='precast',laserActive=hero.id==='laser'&&hero.laserUlt>0,aiming=state.ultimateAimInteraction?.heroId===hero.id,actionable=ready||precast||aiming;
+    const pulse=(ready||precast)&&!aiming&&!prefersReducedMotion()?(.58+.42*((Math.cos((state.uiTime||0)*Math.PI*2/.8)+1)/2)):1;
     ctx.fillStyle='#0c1230';ctx.beginPath();ctx.roundRect(x-29,cardY,58,84,10);ctx.fill();
-    ctx.strokeStyle=laserActive?'#c386ff':ready?'#ffd66d':h.color;ctx.lineWidth=laserActive?3:ready?2:1;ctx.shadowColor=laserActive?'#9b75ff':'transparent';ctx.shadowBlur=laserActive?9:0;ctx.stroke();ctx.shadowBlur=0;
-    if(ready){ctx.save();ctx.globalAlpha=pulse;ctx.strokeStyle='#ffd66d';ctx.lineWidth=aiming?3:2;ctx.shadowColor='#f3cd59';ctx.shadowBlur=aiming?8:5;ctx.strokeRect(x-27,cardY+2,54,80);ctx.restore();}
+    ctx.strokeStyle=laserActive?'#c386ff':aiming||ready?'#ffd66d':precast?'#6fe0d5':charged?'#76829f':h.color;ctx.lineWidth=laserActive?3:actionable?2:1;ctx.shadowColor=laserActive?'#9b75ff':'transparent';ctx.shadowBlur=laserActive?9:0;ctx.stroke();ctx.shadowBlur=0;
+    if(actionable){ctx.save();ctx.globalAlpha=pulse;ctx.strokeStyle=precast&&!aiming?'#6fe0d5':'#ffd66d';ctx.lineWidth=aiming?3:2;ctx.shadowColor=precast&&!aiming?'#49c9c2':'#f3cd59';ctx.shadowBlur=aiming?8:5;ctx.strokeRect(x-27,cardY+2,54,80);ctx.restore();}
     const scale=heroAttackScale(hero);ctx.save();ctx.translate(x,cardY+19);ctx.scale(scale,scale);ctx.fillStyle=h.color;ctx.beginPath();ctx.arc(0,0,15,0,7);ctx.fill();if(prefersReducedMotion()&&hero.attackFeedback>0){ctx.strokeStyle='#fff5bf';ctx.lineWidth=3;ctx.stroke();}drawHeroMark(hero.id,0,0,h.color);ctx.restore();
     ctx.fillStyle='#e8ecff';ctx.font='bold 10px Microsoft YaHei';ctx.textAlign='center';ctx.fillText(h.name,x,cardY+42);
-    ctx.fillStyle='#27304c';ctx.fillRect(x-21,cardY+48,42,5);ctx.save();ctx.globalAlpha=pulse;ctx.fillStyle=ready?'#f3cd59':'#65d8f2';ctx.fillRect(x-21,cardY+48,42*ratio,5);ctx.restore();
+    ctx.fillStyle='#27304c';ctx.fillRect(x-21,cardY+48,42,5);ctx.save();ctx.globalAlpha=pulse;ctx.fillStyle=ready?'#f3cd59':precast?'#65ddd2':charged?'#8792aa':'#65d8f2';ctx.fillRect(x-21,cardY+48,42*ratio,5);ctx.restore();
     ctx.fillStyle='#b9c8e9';ctx.font='9px Microsoft YaHei';ctx.fillText(`${Math.floor(hero.energy)}/${hero.energyMax}`,x,cardY+62);
-    ctx.fillStyle=laserActive?'#d6b9ff':ready?'#ffe889':'#9ee8ff';ctx.font='bold 8px Microsoft YaHei';ctx.fillText(aiming?'瞄准中':laserActive?`镭爆 ${hero.laserUlt.toFixed(1)}s`:ready?'可释放':'蓄能中',x,cardY+72);
+    ctx.fillStyle=laserActive?'#d6b9ff':ready?'#ffe889':precast?'#9ff7ec':charged?'#b6bfd2':'#9ee8ff';ctx.font='bold 8px Microsoft YaHei';ctx.fillText(aiming?'瞄准中':laserActive?`镭爆 ${hero.laserUlt.toFixed(1)}s`:availability.status,x,cardY+72);
     for(let i=0;i<3;i++){const tape=hero.tapes[i],slotX=x-17+i*12,grade=tape&&tapeGrade(tape);ctx.fillStyle='#141b35';ctx.fillRect(slotX,cardY+75,10,7);ctx.strokeStyle=tape?colors[grade]:'#58627f';ctx.lineWidth=tape?1.5:1;ctx.strokeRect(slotX+.5,cardY+75.5,9,6);if(tape){ctx.fillStyle=colors[grade];ctx.font='bold 6px sans-serif';ctx.fillText(grade==='orange'?(tape.alignment==='artifact'?'神':'魔'):grade==='blue'?'Ⅰ':'Ⅱ',slotX+5,cardY+81);if(grade==='orange'&&tape.alignment==='artifact'){ctx.strokeStyle='#ffe889';ctx.shadowColor='#ffd66d';ctx.shadowBlur=5;ctx.beginPath();ctx.arc(slotX+5,cardY+78,7,0,7);ctx.stroke();ctx.shadowBlur=0}if(grade==='orange'&&tape.alignment==='cursed'){ctx.strokeStyle='#8d2530';ctx.shadowColor='#8d2530';ctx.shadowBlur=5;ctx.beginPath();ctx.moveTo(slotX+1,cardY+76);ctx.lineTo(slotX+8,cardY+81);ctx.stroke();ctx.shadowBlur=0}}}
   }
   for(let i=state.heroes.length;i<5;i++){const x=55+i*70;ctx.strokeStyle='#67709a';ctx.setLineDash([4,4]);ctx.strokeRect(x-27,cardY,54,84);ctx.setLineDash([]);}
