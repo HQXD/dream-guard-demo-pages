@@ -10,11 +10,11 @@ const GAME_CONFIG = {
     kite: { name: '风筝', icon: '🪁', color: '#70d489', damage: 8, interval: .65, energyGain: 3, trait: '穿透', description: '8伤害 / 0.65秒；穿透2', pierce: 2, ultimate: '千刃风暴' },
     rock: { name: '岩卫', icon: '🛡️', color: '#d4a45d', damage: 15, interval: 1, energyGain: 5, trait: '击退', description: '15伤害 / 1秒；击退敌人', knockback: 38, ultimate: '城垣苏醒' },
     star: { name: '星瞳', icon: '✦', color: '#b78bf5', damage: 18, interval: 1.1, energyGain: 5, trait: '小范围', description: '18伤害 / 1.1秒；小范围溅射', splash: 42, ultimate: '星群审判' },
-    laser: { name: '镭射眼', icon: '◉', color: '#64e9f1', profession: 'mage', professionLabel: '法师', damage: 10, interval: .5, energyGain: 3, range: 680, trait: '持续链接', description: '10伤害 / 0.5秒；持续激光锁敌', ultimate: '镭爆时间' },
-    princess: { name: '东方公主', icon: '◇', color: '#f0ac61', profession: 'marksman', professionLabel: '射手', damage: 12, interval: .7, energyGain: 4, range: 640, trait: '飞针穿透', description: '12伤害 / 0.7秒；飞针穿透并插地', ultimate: '穿针引线' },
-    arthur: { name: '亚瑟', icon: '◐', color: '#b9d9f2', profession: 'support', professionLabel: '辅助（暂定）', damage: 16, interval: .85, energyGain: 4, range: 320, trait: '刀气护盾', description: '16伤害 / 0.85秒；弯月刀气与诱敌盾', ultimate: '圣盾号令' },
-    guanyu: { name: '关羽', icon: '▣', color: '#ee7356', profession: 'warrior', professionLabel: '战士', damage: 22, interval: .9, energyGain: 4, range: 680, trait: '外卖车队', description: '22伤害 / 0.9秒；上行外卖车冲阵', ultimate: '巨轮车队' },
-    monk: { name: '唐小僧', icon: '◉', color: '#d8b466', profession: 'control', professionLabel: '控制', damage: 14, interval: 1.15, energyGain: 5, range: 560, trait: '木鱼经文', description: '14伤害 / 1.15秒；眩晕木鱼与飞行经文', ultimate: '超级木鱼' }
+    laser: { name: '镭射眼', icon: '◉', color: '#64e9f1', profession: 'mage', professionLabel: '法师', damage: 10, interval: .5, energyGain: 3, trait: '持续链接', description: '10伤害 / 0.5秒；持续激光锁敌', ultimate: '镭爆时间' },
+    princess: { name: '东方公主', icon: '◇', color: '#f0ac61', profession: 'marksman', professionLabel: '射手', damage: 12, interval: .7, energyGain: 4, trait: '飞针穿透', description: '12伤害 / 0.7秒；飞针穿透并插地', ultimate: '穿针引线' },
+    arthur: { name: '亚瑟', icon: '◐', color: '#b9d9f2', profession: 'summoner', professionLabel: '召唤师', damage: 16, interval: .85, energyGain: 4, trait: '刀气护盾', description: '16伤害 / 0.85秒；弯月刀气与诱敌盾', ultimate: '圣盾号令' },
+    guanyu: { name: '关羽', icon: '▣', color: '#ee7356', profession: 'warrior', professionLabel: '战士', damage: 22, interval: .9, energyGain: 4, trait: '外卖车队', description: '22伤害 / 0.9秒；上行外卖车冲阵', ultimate: '巨轮车队' },
+    monk: { name: '唐小僧', icon: '◉', color: '#d8b466', profession: 'control', professionLabel: '控制', damage: 14, interval: 1.15, energyGain: 5, trait: '木鱼经文', description: '14伤害 / 1.15秒；眩晕木鱼与飞行经文', ultimate: '超级木鱼' }
   },
   enemies: {
     imp: { name: '小鬼', color: '#d66676', hp: 26, speed: 23, attack: 4, attackInterval: 1.35, xp: 7, radius: 12 },
@@ -71,6 +71,31 @@ const GAME_CONFIG = {
 // 正式梦灵唯一入口。历史梦灵资料可保留以供溯源，但不得经过招募、战斗、词条或卡带流程。
 const FORMAL_HERO_IDS = Object.freeze(['laser', 'princess', 'arthur', 'guanyu', 'monk']);
 const FORMAL_HERO_ID_SET = new Set(FORMAL_HERO_IDS);
+const BATTLEFIELD_TOP_Y = 74;
+const BATTLEFIELD_RANGE = Object.freeze({
+  worldLength:16000,
+  canvasTopY:BATTLEFIELD_TOP_Y,
+  canvasWallY:675,
+  canvasLength:675-74,
+  worldPerCanvasPixel:16000/(675-74)
+});
+const PROFESSION_BASIC_RANGE_WORLD = Object.freeze({ warrior:6000, marksman:12000, mage:9000, support:9000, control:9000, summoner:6000 });
+const BASIC_ATTACK_SKILL_LIMITS_CANVAS = Object.freeze({ princessNeedle:640, arthurBladeBase:300, arthurBladePerEdge:35, monkFish:600 });
+function worldDistanceToCanvas(worldDistance) { return worldDistance/BATTLEFIELD_RANGE.worldPerCanvasPixel; }
+function canvasDistanceToWorld(canvasDistance) { return canvasDistance*BATTLEFIELD_RANGE.worldPerCanvasPixel; }
+function worldYToCanvas(worldY) { return BATTLEFIELD_RANGE.canvasWallY-worldDistanceToCanvas(Math.max(0,Math.min(BATTLEFIELD_RANGE.worldLength,worldY))); }
+function canvasYToWorld(canvasY) { return Math.max(0,Math.min(BATTLEFIELD_RANGE.worldLength,canvasDistanceToWorld(BATTLEFIELD_RANGE.canvasWallY-canvasY))); }
+function worldXToCanvas(worldX) { return GAME_CONFIG.arena.width/2+worldDistanceToCanvas(worldX); }
+function canvasXToWorld(canvasX) { return canvasDistanceToWorld(canvasX-GAME_CONFIG.arena.width/2); }
+function heroAttackAnchor(hero) { return {x:heroX(hero),y:BATTLEFIELD_RANGE.canvasWallY}; }
+function heroBaseRangeWorld(hero) { return PROFESSION_BASIC_RANGE_WORLD[GAME_CONFIG.heroes[hero?.id]?.profession] || 0; }
+function heroRangeBonusCanvas(hero) {
+  // 历史卡带的 range/laserRange 数值定义为 Canvas px；在职业基础射程完成 world→Canvas 换算后原值叠加。
+  return Math.max(0,(hero?.mods?.range||0)+(hero?.id==='laser'?(hero?.mods?.laserRange||0):0));
+}
+function heroEffectiveRangeCanvas(hero) { return worldDistanceToCanvas(heroBaseRangeWorld(hero))+heroRangeBonusCanvas(hero); }
+function isPointInBasicAttackRange(hero, point) { const anchor=heroAttackAnchor(hero);return Boolean(point)&&Math.hypot(point.x-anchor.x,point.y-anchor.y)<=heroEffectiveRangeCanvas(hero); }
+function isEnemyInBasicAttackRange(hero, enemy) { return Boolean(enemy)&&isPointInBasicAttackRange(hero,enemy); }
 function isFormalHeroId(id) { return FORMAL_HERO_ID_SET.has(id); }
 function availableFormalHeroIds() {
   return FORMAL_HERO_IDS.filter(id => !state?.heroes?.some(hero => hero.id === id));
@@ -216,8 +241,7 @@ function ultimateBlockReason(hero, options={}) {
     return emptySpawnGap() && (allowManualAim || manual) ? '' : '暂无敌军，请拖拽选择车道预先出击';
   }
   if (hero.id === 'arthur' || hero.id === 'monk') {
-    const hasTarget=hero.id==='arthur'?Boolean(findArthurTarget(hero,560)):Boolean(monkTarget(hero,620));
-    if (hasTarget) return '';
+    if (state.enemies.length) return '';
     if (emptySpawnGap()) return allowManualAim || manual ? '' : '暂无密集目标，请拖拽指定落点';
     return '暂无可释放目标';
   }
@@ -233,8 +257,8 @@ function ultimateAvailability(hero) {
   return {kind:'blocked',status:'暂不可用',reason:immediateReason};
 }
 function bestMonkPoint(hero) {
-  const x=heroX(hero),y=711,candidates=state.enemies.filter(e=>Math.hypot(e.x-x,e.y-y)<=620);
-  const best=candidates.sort((a,b)=>state.enemies.filter(o=>Math.hypot(o.x-a.x,o.y-a.y)<=120).length-state.enemies.filter(o=>Math.hypot(o.x-b.x,o.y-b.y)<=120).length||b.y-a.y||(a.spawnOrder||0)-(b.spawnOrder||0))[0];
+  const candidates=[...state.enemies];
+  const best=candidates.sort((a,b)=>state.enemies.filter(o=>Math.hypot(o.x-b.x,o.y-b.y)<=120).length-state.enemies.filter(o=>Math.hypot(o.x-a.x,o.y-a.y)<=120).length||b.y-a.y||(a.spawnOrder||0)-(b.spawnOrder||0))[0];
   return best ? clampAimPoint(best) : null;
 }
 function guanyuAutoLane() {
@@ -575,7 +599,7 @@ function showChoices(kind) {
 }
 function makeChoice(option) {
   const data = option.type === 'hero' ? GAME_CONFIG.heroes[option.id] : GAME_CONFIG.upgrades[option.id];
-  let description=option.type === 'hero' ? `职业：${data.professionLabel} · ${data.description}` : data.description;
+  let description=option.type === 'hero' ? `职业：${data.professionLabel} · 基础射程 ${heroBaseRangeWorld({id:option.id})} · ${data.description}` : data.description;
   if(option.id==='guanyuLane'){const hero=state.heroes.find(h=>h.id==='guanyu'),stack=hero?.guanyuLaneStacks||0;description=`当前：碰撞宽 ${30+10*stack}px / 减速 ${12*stack}%（0.8秒）；下阶：宽 +10px、减速 +12%（${stack+1}/2）`;}
   const button = document.createElement('button'); button.className = 'choice'; button.type = 'button'; button.style.setProperty('--card-color', data.color);
   button.innerHTML = `<span class="choice-icon">${choiceIconSvg(option.id)}</span><span><strong>${data.name}</strong><small>${description}</small></span><em class="choice-tag">${option.type === 'hero' ? '护卫' : data.tag}</em>`;
@@ -614,7 +638,7 @@ function startWave() {
 }
 function spawnEnemy(id) {
   const type = GAME_CONFIG.enemies[id], scaling = 1 + state.wave * .15;
-  state.enemies.push({ id, spawnOrder:state.enemySerial++, x: 38 + Math.random() * (GAME_CONFIG.arena.width - 76), y: 94 + Math.random() * 28, hp: type.hp * scaling, maxHp: type.hp * scaling, slow: 0, slowStrength:0, carSlowRemaining:0, carSlowStrength:0, frozen: 0, stun:0,stunResist:0,bind:0, hitCd: type.attackInterval * .5, flash: 0 });
+  state.enemies.push({ id, spawnOrder:state.enemySerial++, x: 38 + Math.random() * (GAME_CONFIG.arena.width - 76), y: BATTLEFIELD_TOP_Y, hp: type.hp * scaling, maxHp: type.hp * scaling, slow: 0, slowStrength:0, carSlowRemaining:0, carSlowStrength:0, frozen: 0, stun:0,stunResist:0,bind:0, hitCd: type.attackInterval * .5, flash: 0 });
 }
 function update(dt) {
   if (!state || state.ended) return;
@@ -669,16 +693,15 @@ function updateEnemies(dt) {
     else { if(e.stun||e.frozen)continue;e.hitCd -= dt; if (e.hitCd <= 0) { e.hitCd = type.attackInterval; hurtWall(type.attack); } }
   }
 }
-function findArthurTarget(hero,range=320){const x=heroX(hero),y=711;return state.enemies.filter(e=>Math.hypot(e.x-x,e.y-y)<=range).sort((a,b)=>(b.y-a.y)||(Math.hypot(a.x-x,a.y-y)-Math.hypot(b.x-x,b.y-y))||((a.spawnOrder||0)-(b.spawnOrder||0)))[0]||null;}
-function bestShieldPoint(hero){const x=heroX(hero),y=711,candidates=state.enemies.filter(e=>Math.hypot(e.x-x,e.y-y)<=560);let best=null,bestCount=-1;for(const e of candidates){const count=state.enemies.filter(o=>Math.hypot(o.x-e.x,o.y-e.y)<=120).length;if(!best||count>bestCount||(count===bestCount&&(e.y>best.y||(e.y===best.y&&(e.spawnOrder||0)<(best.spawnOrder||0))))){best=e;bestCount=count;}}return best?{x:Math.max(48,Math.min(342,best.x)),y:Math.max(48,Math.min(555,best.y))}:null;}
-function launchBlade(hero,tx,ty,retaliate=false){if(!retaliate&&state.blades.filter(b=>!b.retaliate).length>=8)return false;const x=heroX(hero),y=711,dx=tx-x,dy=ty-y,d=Math.hypot(dx,dy)||1,m=hero.mods||defaultMods(),dist=300+35*(hero.arthurEdgeStacks||0),width=96+12*(hero.arthurEdgeStacks||0),damage=16*state.global.damage*(1+m.damage+.2*(hero.arthurMarkStacks||0))*(retaliate?.8:1)*(retaliate?(1+.25*(hero.arthurRevengeStacks||0)):1);state.blades.push({hero:'arthur',x,y,vx:dx/d*800,vy:dy/d*800,distance:0,maxDistance:dist,width,damage,retaliate,hits:new Set(),energyGranted:false,crit:!retaliate&&Math.random()<(state.global.crit||0)});triggerAttackFeedback(hero);return true;}
-function updateBlades(dt){for(const blade of [...state.blades]){const ax=blade.x,ay=blade.y,remaining=blade.maxDistance-blade.distance,step=Math.min(800*dt,remaining),bx=ax+blade.vx/800*step,by=ay+blade.vy/800*step;for(const enemy of state.enemies.filter(e=>!blade.hits.has(e)).map(e=>({e,t:segmentHitT(ax,ay,bx,by,e.x,e.y,GAME_CONFIG.enemies[e.id].radius+blade.width/2)})).filter(v=>v.t!==null).sort((a,b)=>a.t-b.t)){blade.hits.add(enemy.e);const damage=blade.damage*(blade.crit?2:1),ok=damageEnemy(enemy.e,damage,blade.crit?'暴击':'刀气');if(ok&&!blade.retaliate&&!blade.energyGranted){const hero=state.heroes.find(h=>h.id==='arthur');primaryEnergy(hero,GAME_CONFIG.heroes.arthur,hero.mods||defaultMods());blade.energyGranted=true;}}blade.x=bx;blade.y=by;blade.distance+=step;if(blade.distance>=blade.maxDistance)remove(state.blades,blade);}}
+function findArthurTarget(hero){const anchor=heroAttackAnchor(hero);return state.enemies.filter(e=>isEnemyInBasicAttackRange(hero,e)).sort((a,b)=>(b.y-a.y)||(Math.hypot(a.x-anchor.x,a.y-anchor.y)-Math.hypot(b.x-anchor.x,b.y-anchor.y))||((a.spawnOrder||0)-(b.spawnOrder||0)))[0]||null;}
+function bestShieldPoint(hero){const candidates=[...state.enemies];let best=null,bestCount=-1;for(const e of candidates){const count=state.enemies.filter(o=>Math.hypot(o.x-e.x,o.y-e.y)<=120).length;if(!best||count>bestCount||(count===bestCount&&(e.y>best.y||(e.y===best.y&&(e.spawnOrder||0)<(best.spawnOrder||0))))){best=e;bestCount=count;}}return best?{x:Math.max(48,Math.min(342,best.x)),y:Math.max(48,Math.min(555,best.y))}:null;}
+function launchBlade(hero,tx,ty,retaliate=false){if(!retaliate&&(!isPointInBasicAttackRange(hero,{x:tx,y:ty})||state.blades.filter(b=>!b.retaliate).length>=8))return false;const {x,y}=heroAttackAnchor(hero),dx=tx-x,dy=ty-y,d=Math.hypot(dx,dy)||1,m=hero.mods||defaultMods(),skillDistance=BASIC_ATTACK_SKILL_LIMITS_CANVAS.arthurBladeBase+BASIC_ATTACK_SKILL_LIMITS_CANVAS.arthurBladePerEdge*(hero.arthurEdgeStacks||0),dist=Math.min(skillDistance,heroEffectiveRangeCanvas(hero)),width=96+12*(hero.arthurEdgeStacks||0),damage=16*state.global.damage*(1+m.damage+.2*(hero.arthurMarkStacks||0))*(retaliate?.8:1)*(retaliate?(1+.25*(hero.arthurRevengeStacks||0)):1);state.blades.push({hero:'arthur',x,y,vx:dx/d*800,vy:dy/d*800,distance:0,maxDistance:dist,width,damage,retaliate,hits:new Set(),energyGranted:false,crit:!retaliate&&Math.random()<(state.global.crit||0)});triggerAttackFeedback(hero);return true;}
+function updateBlades(dt){for(const blade of [...state.blades]){const hero=state.heroes.find(h=>h.id===blade.hero);if(!hero){remove(state.blades,blade);continue;}const ax=blade.x,ay=blade.y,remaining=blade.maxDistance-blade.distance,step=Math.min(800*dt,remaining),bx=ax+blade.vx/800*step,by=ay+blade.vy/800*step;for(const enemy of state.enemies.filter(e=>!blade.hits.has(e)&&isEnemyInBasicAttackRange(hero,e)).map(e=>({e,t:segmentHitT(ax,ay,bx,by,e.x,e.y,GAME_CONFIG.enemies[e.id].radius+blade.width/2)})).filter(v=>v.t!==null).sort((a,b)=>a.t-b.t)){blade.hits.add(enemy.e);const damage=blade.damage*(blade.crit?2:1),ok=damageEnemy(enemy.e,damage,blade.crit?'暴击':'刀气');if(ok&&!blade.retaliate&&!blade.energyGranted){primaryEnergy(hero,GAME_CONFIG.heroes.arthur,hero.mods||defaultMods());blade.energyGranted=true;}}blade.x=bx;blade.y=by;blade.distance+=step;if(blade.distance>=blade.maxDistance)remove(state.blades,blade);}}
 function damageArthurShield(damage,enemy){const shield=state.arthurShield;if(!shield)return;const actual=Math.min(shield.hp,damage);shield.hp-=actual;if(actual>0&&shield.retaliateCd<=0&&shield.retaliations<Math.min(12,8+2*(shield.hero.arthurRevengeStacks||0))){launchBlade(shield.hero,shield.x,shield.y,true);shield.retaliateCd=.4;shield.retaliations++;shield.hero.cooldown=attackInterval(shield.hero,GAME_CONFIG.heroes.arthur);state.effects.push({text:'反击',x:shield.x,y:shield.y-20,life:.4,color:'#ffcb76'});}if(shield.hp<=0)state.arthurShield=null;}
 function updateArthurShield(dt){const s=state.arthurShield;if(!s)return;s.time-=dt;s.retaliateCd=Math.max(0,s.retaliateCd-dt);s.tick-=dt;if(s.time<=0){state.arthurShield=null;return;}if(s.tick<=0){s.tick+=.25;for(const e of [...s.taunted])if(!state.enemies.includes(e))s.taunted.delete(e);const add=state.enemies.filter(e=>!s.taunted.has(e)&&Math.hypot(e.x-s.x,e.y-s.y)<=220).sort((a,b)=>Math.hypot(a.x-s.x,a.y-s.y)-Math.hypot(b.x-s.x,b.y-s.y)||(b.y-a.y)||((a.spawnOrder||0)-(b.spawnOrder||0)));for(const e of add){if(s.taunted.size>=5)break;s.taunted.add(e);}}}
 function attackInterval(hero, spec) { return Math.max(.3, spec.interval * state.global.interval * (hero.mods?.interval || 1) * (hero.distortionTimer > 0 ? 1.25 : 1) * (hero.id === 'laser' ? Math.pow(.92,hero.laserScanStacks||0) : hero.id === 'princess' ? Math.pow(.9,hero.princessVolleyStacks||0) : 1)); }
 function findLaserTarget(hero) {
-  const range=(GAME_CONFIG.heroes.laser.range||680)+(hero.mods?.laserRange||0), x=heroX(hero), y=711;
-  return state.enemies.filter(enemy=>Math.hypot(enemy.x-x,enemy.y-y)<=range).sort((a,b)=>(b.y-a.y)||((a.spawnOrder||0)-(b.spawnOrder||0)))[0]||null;
+  return state.enemies.filter(enemy=>isEnemyInBasicAttackRange(hero,enemy)).sort((a,b)=>(b.y-a.y)||((a.spawnOrder||0)-(b.spawnOrder||0)))[0]||null;
 }
 function primaryEnergy(hero, spec, mods) {
   let energy=Math.max(1,Math.min(spec.energyGain+3,spec.energyGain+mods.energy+(mods.energyFlat||0)));
@@ -688,29 +711,30 @@ function primaryEnergy(hero, spec, mods) {
 }
 function laserTick(hero) {
   const spec=GAME_CONFIG.heroes.laser,mods=hero.mods||defaultMods(),target=findLaserTarget(hero);
-  if(!target){hero.laserTarget=null;hero.laserHits=0;hero.laserBeam=null;return;}
+  if(!target){hero.laserTarget=null;hero.laserHits=0;hero.laserBeam=null;return false;}
   if(hero.laserTarget!==target){hero.laserTarget=target;hero.laserHits=0;}
   const locked=hero.laserLock&&hero.laserHits>=3, crit=Math.random()<(state.global.crit||0), lockPower=locked?1.2:1;
   // 增幅透镜与卡带/神魔的普攻伤害修正共用同一加法桶；只作用于主激光 tick。
   let damage=spec.damage*state.global.damage*(1+mods.damage+.25*Math.min(3,hero.laserLensStacks||0))*lockPower;if(crit)damage*=2;
   const center={x:target.x,y:target.y}; hero.laserBeam={target,flash:.10};
   const causedDamage=damageEnemy(target,damage,crit?'暴击':'镭射');
-  if(!causedDamage){hero.laserTarget=null;hero.laserHits=0;hero.laserBeam=null;return;}
+  if(!causedDamage){hero.laserTarget=null;hero.laserHits=0;hero.laserBeam=null;return false;}
   hero.laserHits++; triggerAttackFeedback(hero); primaryEnergy(hero,spec,mods);
   if(hero.laserUlt>0){
     const radius=90+(mods.laserUltRadius||0)+20*(hero.laserOverdriveStacks||0), power=Math.max(.5,Math.min(2,1+(mods.ultPower||0)))*(1+.2*(hero.laserOverdriveStacks||0)), aoe=(7+(mods.laserUltDamage||0))*power;
     for(const enemy of [...state.enemies]) if(enemy!==target&&Math.hypot(enemy.x-center.x,enemy.y-center.y)<=radius) damageEnemy(enemy,aoe,'镭爆');
     state.effects.push({ring:radius,x:center.x,y:center.y,life:.28,color:'#9d8cff',laserRing:true});
   }
+  return true;
 }
 // Returns the first segment/circle contact, not the closest projection. This keeps the final piercing landing point deterministic across frame rates.
 function segmentHitT(ax,ay,bx,by,px,py,r){const dx=bx-ax,dy=by-ay,fx=ax-px,fy=ay-py,a=dx*dx+dy*dy;if(!a)return Math.hypot(fx,fy)<=r?0:null;const c=fx*fx+fy*fy-r*r;if(c<=0)return 0;const b=2*(fx*dx+fy*dy),disc=b*b-4*a*c;if(disc<0)return null;const root=Math.sqrt(disc),t1=(-b-root)/(2*a),t2=(-b+root)/(2*a);return t1>=0&&t1<=1?t1:t2>=0&&t2<=1?t2:null;}
-function arenaSpan(ax,ay,bx,by){let lo=0,hi=1;for(const [p,q] of [[-(bx-ax),ax],[(bx-ax),390-ax],[-(by-ay),ay-74],[(by-ay),675-ay]]){if(p===0){if(q<0)return null;continue;}const t=q/p;if(p<0)lo=Math.max(lo,t);else hi=Math.min(hi,t);}return lo<=hi?{enter:Math.max(0,lo),exit:Math.min(1,hi)}:null;}
-function findPrincessTarget(hero){const x=heroX(hero),y=711;return state.enemies.filter(enemy=>Math.hypot(enemy.x-x,enemy.y-y)<=GAME_CONFIG.heroes.princess.range).sort((a,b)=>(b.y-a.y)||((a.spawnOrder||0)-(b.spawnOrder||0)))[0]||null;}
+function arenaSpan(ax,ay,bx,by){let lo=0,hi=1;for(const [p,q] of [[-(bx-ax),ax],[(bx-ax),GAME_CONFIG.arena.width-ax],[-(by-ay),ay-BATTLEFIELD_RANGE.canvasTopY],[(by-ay),BATTLEFIELD_RANGE.canvasWallY-ay]]){if(p===0){if(q<0)return null;continue;}const t=q/p;if(p<0)lo=Math.max(lo,t);else hi=Math.min(hi,t);}return lo<=hi?{enter:Math.max(0,lo),exit:Math.min(1,hi)}:null;}
+function findPrincessTarget(hero){return state.enemies.filter(enemy=>isEnemyInBasicAttackRange(hero,enemy)).sort((a,b)=>(b.y-a.y)||((a.spawnOrder||0)-(b.spawnOrder||0)))[0]||null;}
 function plantNeedle(needle){needle.state='planted';needle.life=Math.min(3,2+.5*((state.heroes.find(h=>h.id===needle.hero)?.princessStayStacks)||0));needle.maxLife=needle.life;needle.vx=needle.vy=0;}
 function canLaunchNeedle(hero){const own=state.needles.filter(needle=>needle.hero==='princess');if(own.length<18)return true;const planted=own.filter(needle=>needle.state==='planted').sort((a,b)=>a.life-b.life)[0];if(!planted)return false;remove(state.needles,planted);return true;}
-function launchNeedle(hero){const target=findPrincessTarget(hero);if(!target||!canLaunchNeedle(hero))return false;const x=heroX(hero),y=711,dx=target.x-x,dy=target.y-y,d=Math.hypot(dx,dy)||1;state.needles.push({id:state.needleSerial++,hero:'princess',state:'flying',x,y,px:x,py:y,vx:dx/d*900,vy:dy/d*900,distance:0,hasEnteredArena:false,hits:new Set(),energyGranted:false});triggerAttackFeedback(hero);return true;}
-function needleDamage(hero,needle,target,index){const spec=GAME_CONFIG.heroes.princess,mods=hero.mods||defaultMods(),base=index===0?12:9,crit=Math.random()<(state.global.crit||0),damage=base*state.global.damage*(1+mods.damage+.2*(hero.princessForgeStacks||0))*(crit?2:1),caused=damageEnemy(target,damage,crit?'暴击':'飞针');if(caused&&!needle.energyGranted){primaryEnergy(hero,spec,mods);needle.energyGranted=true;}state.effects.push({text:index===0?'针刺':'穿针',x:target.x,y:target.y-20,life:.24,color:index===0?'#fff0b0':'#e6a56c'});}
+function launchNeedle(hero){const target=findPrincessTarget(hero);if(!target||!canLaunchNeedle(hero))return false;const {x,y}=heroAttackAnchor(hero),dx=target.x-x,dy=target.y-y,d=Math.hypot(dx,dy)||1,maxDistance=Math.min(BASIC_ATTACK_SKILL_LIMITS_CANVAS.princessNeedle,heroEffectiveRangeCanvas(hero));state.needles.push({id:state.needleSerial++,hero:'princess',state:'flying',x,y,px:x,py:y,vx:dx/d*900,vy:dy/d*900,distance:0,maxDistance,hasEnteredArena:false,hits:new Set(),energyGranted:false});triggerAttackFeedback(hero);return true;}
+function needleDamage(hero,needle,target,index){if(!isEnemyInBasicAttackRange(hero,target))return false;const spec=GAME_CONFIG.heroes.princess,mods=hero.mods||defaultMods(),base=index===0?12:9,crit=Math.random()<(state.global.crit||0),damage=base*state.global.damage*(1+mods.damage+.2*(hero.princessForgeStacks||0))*(crit?2:1),caused=damageEnemy(target,damage,crit?'暴击':'飞针');if(caused&&!needle.energyGranted){primaryEnergy(hero,spec,mods);needle.energyGranted=true;}if(caused)state.effects.push({text:index===0?'针刺':'穿针',x:target.x,y:target.y-20,life:.24,color:index===0?'#fff0b0':'#e6a56c'});return caused;}
 function updateNeedles(dt){
   for(const needle of [...state.needles]){
     const hero=state.heroes.find(h=>h.id===needle.hero);if(!hero){remove(state.needles,needle);continue;}
@@ -721,21 +745,21 @@ function updateNeedles(dt){
       for(const enemy of [...state.enemies]){if(needle.returnHits.has(enemy))continue;const radius=GAME_CONFIG.enemies[enemy.id].radius+half,t=segmentHitT(ax,ay,bx,by,enemy.x,enemy.y,radius),count=hero.returnCounts.get(enemy)||0;if(t!==null&&count<3){needle.returnHits.add(enemy);hero.returnCounts.set(enemy,count+1);damageEnemy(enemy,damage,'牵丝');state.effects.push({text:'裂光',x:enemy.x,y:enemy.y-18,life:.25,color:'#ffd27b'});}}
       needle.x=bx;needle.y=by;if(d<=16)remove(state.needles,needle);continue;
     }
-    const remaining=Math.max(0,640-needle.distance),scale=Math.min(1,remaining/(900*dt||1)),rawBx=ax+needle.vx*dt*scale,rawBy=ay+needle.vy*dt*scale,span=arenaSpan(ax,ay,rawBx,rawBy);
+    const maxDistance=needle.maxDistance??Math.min(BASIC_ATTACK_SKILL_LIMITS_CANVAS.princessNeedle,heroEffectiveRangeCanvas(hero)),remaining=Math.max(0,maxDistance-needle.distance),scale=Math.min(1,remaining/(900*dt||1)),rawBx=ax+needle.vx*dt*scale,rawBy=ay+needle.vy*dt*scale,span=arenaSpan(ax,ay,rawBx,rawBy);
     let bx=rawBx,by=rawBy,sx=ax,sy=ay,landAtBoundary=false;
     if(!needle.hasEnteredArena){
       if(span){needle.hasEnteredArena=true;sx=ax+(rawBx-ax)*span.enter;sy=ay+(rawBy-ay)*span.enter;if(span.exit<1){bx=ax+(rawBx-ax)*span.exit;by=ay+(rawBy-ay)*span.exit;landAtBoundary=true;}}
     }else if(span&&span.exit<1){bx=ax+(rawBx-ax)*span.exit;by=ay+(rawBy-ay)*span.exit;landAtBoundary=true;}
-    const candidates=needle.hasEnteredArena?state.enemies.filter(enemy=>!needle.hits.has(enemy)).map(enemy=>({enemy,t:segmentHitT(sx,sy,bx,by,enemy.x,enemy.y,GAME_CONFIG.enemies[enemy.id].radius+3)})).filter(item=>item.t!==null).sort((a,b)=>a.t-b.t):[],limit=Math.min(4,2+state.global.pierce);
+    const candidates=needle.hasEnteredArena?state.enemies.filter(enemy=>!needle.hits.has(enemy)&&isEnemyInBasicAttackRange(hero,enemy)).map(enemy=>({enemy,t:segmentHitT(sx,sy,bx,by,enemy.x,enemy.y,GAME_CONFIG.enemies[enemy.id].radius+3)})).filter(item=>item.t!==null).sort((a,b)=>a.t-b.t):[],limit=Math.min(4,2+state.global.pierce);
     for(const {enemy,t} of candidates){if(needle.hits.size>=limit)break;needle.hits.add(enemy);needleDamage(hero,needle,enemy,needle.hits.size-1);needle.x=sx+(bx-sx)*t;needle.y=sy+(by-sy)*t;if(needle.hits.size>=limit){plantNeedle(needle);break;}}
     if(needle.state!=='flying')continue;
     needle.x=bx;needle.y=by;needle.distance+=Math.hypot(bx-ax,by-ay);
-    if(needle.distance>=640||landAtBoundary)plantNeedle(needle);
+    if(needle.distance>=maxDistance||landAtBoundary)plantNeedle(needle);
   }
 }
 function findGuanyuTarget(hero){
-  const x=heroX(hero), y=711, range=GAME_CONFIG.heroes.guanyu.range;
-  return state.enemies.filter(e=>Math.hypot(e.x-x,e.y-y)<=range).sort((a,b)=>b.y-a.y||Math.hypot(a.x-x,a.y-y)-Math.hypot(b.x-x,b.y-y)||((a.spawnOrder||0)-(b.spawnOrder||0)))[0];
+  const anchor=heroAttackAnchor(hero);
+  return state.enemies.filter(e=>isEnemyInBasicAttackRange(hero,e)).sort((a,b)=>b.y-a.y||Math.hypot(a.x-anchor.x,a.y-anchor.y)-Math.hypot(b.x-anchor.x,b.y-anchor.y)||((a.spawnOrder||0)-(b.spawnOrder||0)))[0];
 }
 function guanyuRandom(seed){let x=(seed>>>0)||1;x^=x<<13;x^=x>>>17;x^=x<<5;return (x>>>0)/4294967296;}
 function launchGuanyuCar(hero, giant=false, laneX=null, batch=null){
@@ -776,7 +800,7 @@ function updateCars(dt){
     const hero=state.heroes.find(h=>h.id===car.hero);if(!hero){remove(state.cars,car);continue;}
     const ax=car.x,ay=car.y,step=car.speed*dt,bx=ax,by=ay-step;
     car.px=ax;car.py=ay;
-    const hits=state.enemies.filter(e=>!car.hits.has(e)).map(e=>({e,t:sweptCarRectHitT(car,ax,ay,bx,by,e)})).filter(v=>v.t!==null).sort((a,b)=>a.t-b.t);
+    const hits=state.enemies.filter(e=>!car.hits.has(e)&&(car.giant||isEnemyInBasicAttackRange(hero,e))).map(e=>({e,t:sweptCarRectHitT(car,ax,ay,bx,by,e)})).filter(v=>v.t!==null).sort((a,b)=>a.t-b.t);
     for(const hit of hits){
       if(car.hits.size>=car.maxHits)break;
       if(car.giant){const used=car.batch.hits.get(hit.e)||0;if(used>=2)continue;car.batch.hits.set(hit.e,used+1);}
@@ -790,10 +814,10 @@ function updateCars(dt){
     if(car.y-car.height/2<0)remove(state.cars,car);
   }
 }
-function monkTarget(hero,range=560){const x=heroX(hero),y=711;return state.enemies.filter(e=>Math.hypot(e.x-x,e.y-y)<=range).sort((a,b)=>b.y-a.y||Math.hypot(a.x-x,a.y-y)-Math.hypot(b.x-x,b.y-y)||(a.spawnOrder||0)-(b.spawnOrder||0))[0];}
+function monkTarget(hero){const anchor=heroAttackAnchor(hero);return state.enemies.filter(e=>isEnemyInBasicAttackRange(hero,e)).sort((a,b)=>b.y-a.y||Math.hypot(a.x-anchor.x,a.y-anchor.y)-Math.hypot(b.x-anchor.x,b.y-anchor.y)||(a.spawnOrder||0)-(b.spawnOrder||0))[0];}
 function monkStun(e,hero){if(e.stunResist>0)return;const elite=e.id==='rift',boss=e.id==='boss',n=hero.monkCalmStacks||0,d=(boss?.5:elite?1:2)+(boss?.1:elite?.15:.3)*n,r=boss?2:elite?1.5:1;e.stun=Math.max(e.stun||0,d);e.stunResist=r;}
-function launchMonkFish(hero){const target=monkTarget(hero);if(!target||state.monkFish.length>=8)return false;const x=heroX(hero),y=711,dx=target.x-x,dy=target.y-y,d=Math.hypot(dx,dy)||1,m=hero.mods||defaultMods();state.monkFish.push({hero:'monk',x,y,vx:dx/d*280,vy:dy/d*280,distance:0,age:0,verses:0,hits:new Set(),energy:false,crit:Math.random()<(state.global.crit||0),damage:14*state.global.damage*(1+m.damage+.2*(hero.monkStrikeStacks||0))});triggerAttackFeedback(hero);return true;}
-function updateMonk(dt){for(const fish of [...state.monkFish]){const hero=state.heroes.find(h=>h.id==='monk');if(!hero){remove(state.monkFish,fish);continue;}const ax=fish.x,ay=fish.y,bx=ax+fish.vx*dt,by=ay+fish.vy*dt;fish.age+=dt;while(fish.verses<2&&fish.age>=fish.verses+1){fish.verses++;if(state.scriptures.length<12){const t=state.enemies.filter(e=>Math.hypot(e.x-fish.x,e.y-fish.y)<=220).sort((a,b)=>Math.hypot(a.x-fish.x,a.y-fish.y)-Math.hypot(b.x-fish.x,b.y-fish.y)||b.y-a.y||(a.spawnOrder||0)-(b.spawnOrder||0))[0];if(t)state.scriptures.push({hero:'monk',target:t,x:fish.x,y:fish.y,tx:t.x,ty:t.y,time:0,duration:.35,damage:(9+(hero.mods.monkVerseDamage||0))*(1+.35*(hero.monkVerseStacks||0))});}}const limit=Math.min(3,1+state.global.pierce);for(const hit of state.enemies.filter(e=>!fish.hits.has(e)).map(e=>({e,t:segmentHitT(ax,ay,bx,by,e.x,e.y,GAME_CONFIG.enemies[e.id].radius+16)})).filter(x=>x.t!==null).sort((a,b)=>a.t-b.t)){fish.hits.add(hit.e);const ok=damageEnemy(hit.e,fish.damage*(fish.crit?2:1),fish.crit?'暴击':'木鱼');if(ok){monkStun(hit.e,hero);if(!fish.energy){primaryEnergy(hero,GAME_CONFIG.heroes.monk,hero.mods);fish.energy=true;}}if(fish.hits.size>=limit){remove(state.monkFish,fish);break;}}fish.x=bx;fish.y=by;fish.distance+=280*dt;if(fish.distance>=600||fish.y<0)remove(state.monkFish,fish);}for(const s of [...state.scriptures]){s.time+=dt;if(s.time>=s.duration){if(state.enemies.includes(s.target))damageEnemy(s.target,s.damage,'经文');remove(state.scriptures,s);}}}
+function launchMonkFish(hero){const target=monkTarget(hero);if(!target||state.monkFish.length>=8)return false;const {x,y}=heroAttackAnchor(hero),dx=target.x-x,dy=target.y-y,d=Math.hypot(dx,dy)||1,m=hero.mods||defaultMods(),maxDistance=Math.min(BASIC_ATTACK_SKILL_LIMITS_CANVAS.monkFish,heroEffectiveRangeCanvas(hero));state.monkFish.push({hero:'monk',x,y,vx:dx/d*280,vy:dy/d*280,distance:0,maxDistance,age:0,verses:0,hits:new Set(),energy:false,crit:Math.random()<(state.global.crit||0),damage:14*state.global.damage*(1+m.damage+.2*(hero.monkStrikeStacks||0))});triggerAttackFeedback(hero);return true;}
+function updateMonk(dt){for(const fish of [...state.monkFish]){const hero=state.heroes.find(h=>h.id==='monk');if(!hero){remove(state.monkFish,fish);continue;}const ax=fish.x,ay=fish.y,maxDistance=fish.maxDistance??Math.min(BASIC_ATTACK_SKILL_LIMITS_CANVAS.monkFish,heroEffectiveRangeCanvas(hero)),remaining=Math.max(0,maxDistance-fish.distance),step=Math.min(280*dt,remaining),bx=ax+fish.vx/280*step,by=ay+fish.vy/280*step;fish.age+=dt;while(fish.verses<2&&fish.age>=fish.verses+1){fish.verses++;if(state.scriptures.length<12){const t=state.enemies.filter(e=>isEnemyInBasicAttackRange(hero,e)&&Math.hypot(e.x-fish.x,e.y-fish.y)<=220).sort((a,b)=>Math.hypot(a.x-fish.x,a.y-fish.y)-Math.hypot(b.x-fish.x,b.y-fish.y)||b.y-a.y||(a.spawnOrder||0)-(b.spawnOrder||0))[0];if(t)state.scriptures.push({hero:'monk',target:t,x:fish.x,y:fish.y,tx:t.x,ty:t.y,time:0,duration:.35,damage:(9+(hero.mods.monkVerseDamage||0))*(1+.35*(hero.monkVerseStacks||0))});}}const limit=Math.min(3,1+state.global.pierce);for(const hit of state.enemies.filter(e=>!fish.hits.has(e)&&isEnemyInBasicAttackRange(hero,e)).map(e=>({e,t:segmentHitT(ax,ay,bx,by,e.x,e.y,GAME_CONFIG.enemies[e.id].radius+16)})).filter(x=>x.t!==null).sort((a,b)=>a.t-b.t)){fish.hits.add(hit.e);const ok=damageEnemy(hit.e,fish.damage*(fish.crit?2:1),fish.crit?'暴击':'木鱼');if(ok){monkStun(hit.e,hero);if(!fish.energy){primaryEnergy(hero,GAME_CONFIG.heroes.monk,hero.mods);fish.energy=true;}}if(fish.hits.size>=limit){remove(state.monkFish,fish);break;}}fish.x=bx;fish.y=by;fish.distance+=step;if(fish.distance>=maxDistance||fish.y<0)remove(state.monkFish,fish);}for(const s of [...state.scriptures]){s.time+=dt;if(s.time>=s.duration){if(state.enemies.includes(s.target)&&isEnemyInBasicAttackRange(state.heroes.find(h=>h.id===s.hero),s.target))damageEnemy(s.target,s.damage,'经文');remove(state.scriptures,s);}}}
 function monkPulse(s){s.pulses++;s.pulseVisual=.35;for(const e of state.enemies)if(Math.hypot(e.x-s.x,e.y-s.y)<=s.radius)e.bind=Math.max(e.bind||0,e.id==='boss'?.5:e.id==='rift'?1:2);state.effects.push({ring:s.radius,x:s.x,y:s.y,life:.35,color:'#f2cf77'});}
 function updateSuperMonks(dt){for(const s of [...state.superMonks]){const hero=state.heroes.find(h=>h.id==='monk');if(!hero){remove(state.superMonks,s);continue;}let remaining=dt;if(!s.arrived){const dx=s.tx-s.x,dy=s.ty-s.y,d=Math.hypot(dx,dy);const step=Math.min(d,500*remaining);const ax=s.x,ay=s.y;if(d>0){s.x+=dx/d*step;s.y+=dy/d*step;}if(step>=d){s.x=s.tx;s.y=s.ty;s.hits??=new Set();for(const e of state.enemies.filter(e=>!s.hits.has(e)).map(e=>({e,t:segmentHitT(ax,ay,s.x,s.y,e.x,e.y,GAME_CONFIG.enemies[e.id].radius+32)})).filter(v=>v.t!==null)){s.hits.add(e.e);damageEnemy(e.e,s.damage,'超级木鱼');monkStun(e.e,hero);}s.arrived=true;s.time=0;monkPulse(s);remaining-=d/500;}else remaining=0;}if(!s.arrived)continue;const before=s.time;s.time+=remaining;s.pulseVisual=Math.max(0,(s.pulseVisual||0)-dt);if(s.pulses<2&&before<2.5&&s.time>=2.5)monkPulse(s);if(s.time>=5)remove(state.superMonks,s);}}
 function updateHeroes(dt) {
@@ -806,23 +830,23 @@ function updateHeroes(dt) {
       if(hero.laserUlt>0){hero.laserUlt=Math.max(0,hero.laserUlt-dt);if(hero.laserUlt<1e-6)hero.laserUlt=0;}
       if(hero.laserBeam)hero.laserBeam.flash=Math.max(0,hero.laserBeam.flash-dt);
       hero.laserTimer=(hero.laserTimer ?? .1)-dt;
-      while(hero.laserTimer<=0){hero.laserTimer+=attackInterval(hero,spec);laserTick(hero);}
+      while(hero.laserTimer<=0){if(!laserTick(hero)){hero.laserTimer=0;break;}hero.laserTimer+=attackInterval(hero,spec);}
       continue;
     }
     if(hero.id==='princess'){
       hero.cooldown-=dt;
-      if(hero.cooldown<=0&&launchNeedle(hero))hero.cooldown+=attackInterval(hero,spec);
+      if(hero.cooldown<=0)hero.cooldown=launchNeedle(hero)?attackInterval(hero,spec):0;
       continue;
     }
     if(hero.id==='arthur'){
-      hero.cooldown-=dt;const target=findArthurTarget(hero);if(hero.cooldown<=0&&target&&launchBlade(hero,target.x,target.y))hero.cooldown+=attackInterval(hero,spec);continue;
+      hero.cooldown-=dt;if(hero.cooldown<=0){const target=findArthurTarget(hero);hero.cooldown=target&&launchBlade(hero,target.x,target.y)?attackInterval(hero,spec):0;}continue;
     }
     if(hero.id==='guanyu'){
       hero.cooldown-=dt;
       if(hero.cooldown<=0){if(launchGuanyuCar(hero))hero.cooldown=attackInterval(hero,spec);else if(state.cars.filter(car=>!car.giant).length>=12)hero.cooldown=.05;else hero.cooldown=0;}
       continue;
     }
-    if(hero.id==='monk'){hero.cooldown-=dt;if(hero.cooldown<=0&&launchMonkFish(hero))hero.cooldown=attackInterval(hero,spec);continue;}
+    if(hero.id==='monk'){hero.cooldown-=dt;if(hero.cooldown<=0)hero.cooldown=launchMonkFish(hero)?attackInterval(hero,spec):0;continue;}
     hero.cooldown -= dt;
     if (hero.cooldown <= 0 && state.enemies.length) {
       const interval = attackInterval(hero,spec);
@@ -935,7 +959,7 @@ function drawArthurShield(){const s=state.arthurShield;if(!s)return;ctx.save();c
 function drawNeedle(needle){const hero=state.heroes.find(h=>h.id===needle.hero),x=needle.x,y=needle.y;if(!hero)return;ctx.save();if(needle.state==='planted'){ctx.globalAlpha=Math.max(.18,needle.life/needle.maxLife);ctx.strokeStyle='#f6c26e';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(x-5,y+8);ctx.lineTo(x+5,y-8);ctx.stroke();ctx.strokeStyle='#f6d38b';ctx.lineWidth=1;ctx.beginPath();ctx.arc(x,y,7*needle.life/needle.maxLife,0,7);ctx.stroke();}else if(needle.state==='returning'){ctx.strokeStyle='#ffd56f';ctx.shadowColor='#ffbd55';ctx.shadowBlur=8;ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(heroX(hero),711);ctx.stroke();ctx.fillStyle='#fff0bb';ctx.beginPath();ctx.arc(x,y,3,0,7);ctx.fill();}else{ctx.strokeStyle='#ffcf71';ctx.shadowColor='#ff7c52';ctx.shadowBlur=7;ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(x-needle.vx/900*9,y-needle.vy/900*9);ctx.lineTo(x,y);ctx.stroke();}ctx.restore();}
 function drawPrincessNeedleCount(){const hero=state.heroes.find(h=>h.id==='princess');if(!hero)return;ctx.fillStyle='#ffd38a';ctx.font='bold 8px Microsoft YaHei';ctx.textAlign='center';ctx.fillText(`飞针:${state.needles.filter(needle=>needle.hero==='princess').length}`,heroX(hero),704);}
 function drawGuanyuCarCount(){const hero=state.heroes.find(h=>h.id==='guanyu');if(!hero)return;const normal=state.cars.filter(car=>!car.giant).length,giant=state.cars.filter(car=>car.giant).length;ctx.fillStyle='#ffc178';ctx.font='bold 8px Microsoft YaHei';ctx.textAlign='center';ctx.fillText(giant?`车队:${giant}`:`外卖车:${normal}/12`,heroX(hero),704);}
-function drawLasers(){for(const hero of state.heroes.filter(h=>h.id==='laser')){const beam=hero.laserBeam,target=beam?.target,x=heroX(hero),y=711,range=(GAME_CONFIG.heroes.laser.range||680)+(hero.mods?.laserRange||0);if(!target||!state.enemies.includes(target)||Math.hypot(target.x-x,target.y-y)>range)continue;ctx.save();ctx.lineCap='round';ctx.strokeStyle='#51dce9';ctx.shadowColor='#53edff';ctx.shadowBlur=8;ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(x,y-14);ctx.lineTo(target.x,target.y);ctx.stroke();if(beam.flash>0){ctx.strokeStyle='#e5ffff';ctx.lineWidth=5;ctx.beginPath();ctx.moveTo(x,y-14);ctx.lineTo(target.x,target.y);ctx.stroke();}ctx.strokeStyle='#bafcff';ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(target.x,target.y,GAME_CONFIG.enemies[target.id].radius+5,0,7);ctx.stroke();ctx.restore();}}
+function drawLasers(){for(const hero of state.heroes.filter(h=>h.id==='laser')){const beam=hero.laserBeam,target=beam?.target,x=heroX(hero),y=711;if(!target||!state.enemies.includes(target)||!isEnemyInBasicAttackRange(hero,target))continue;ctx.save();ctx.lineCap='round';ctx.strokeStyle='#51dce9';ctx.shadowColor='#53edff';ctx.shadowBlur=8;ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(x,y-14);ctx.lineTo(target.x,target.y);ctx.stroke();if(beam.flash>0){ctx.strokeStyle='#e5ffff';ctx.lineWidth=5;ctx.beginPath();ctx.moveTo(x,y-14);ctx.lineTo(target.x,target.y);ctx.stroke();}ctx.strokeStyle='#bafcff';ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(target.x,target.y,GAME_CONFIG.enemies[target.id].radius+5,0,7);ctx.stroke();ctx.restore();}}
 function drawTapeDrop(tape){const c='#65bfff';ctx.save();ctx.translate(tape.x,tape.y);ctx.shadowColor=c;ctx.shadowBlur=14;ctx.fillStyle='#1b2342';ctx.strokeStyle=c;ctx.lineWidth=3;ctx.beginPath();ctx.roundRect(-20,-20,40,40,8);ctx.fill();ctx.stroke();ctx.fillStyle=c;ctx.fillRect(-12,-7,24,14);ctx.fillStyle='#fff';ctx.fillRect(-8,-3,7,6);ctx.fillRect(3,-3,5,6);ctx.restore();}
 function drawTapeFlight(f){const progress=Math.max(0,Math.min(1,1-f.time/.4)),target=tapeFlightTarget(f),x=f.x+(target.x-f.x)*progress,y=f.y+(target.y-f.y)*progress-55*4*progress*(1-progress);drawTapeDrop({...f.tape,x,y});}
 function overflowDrainOrigin(){const fallback={x:350,y:782},badge=ui.tapeTray?.querySelector?.('.tray-overflow'),rect=badge?.getBoundingClientRect?.(),canvasRect=canvas.getBoundingClientRect();if(!rect||!canvasRect.width||!canvasRect.height)return fallback;return {x:(rect.left+rect.width/2-canvasRect.left)*GAME_CONFIG.arena.width/canvasRect.width,y:(rect.top+rect.height/2-canvasRect.top)*GAME_CONFIG.arena.height/canvasRect.height};}
