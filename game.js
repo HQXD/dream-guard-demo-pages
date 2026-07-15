@@ -252,7 +252,7 @@ function syncUltimateButtons() {
     const spec = GAME_CONFIG.heroes[hero.id], button = document.createElement('button'), ready = hero.energy >= hero.energyMax;
     const aiming=state.ultimateAimInteraction?.heroId===hero.id;
     button.type = 'button'; button.className = `ultimate-button${ready ? ' ready' : ''}${aiming ? ' aiming' : ''}`;
-    button.style.gridColumn = String(index + 1); button.setAttribute('aria-label', `${spec.name}·${spec.professionLabel}·${spec.ultimate}，能量 ${Math.floor(hero.energy)}/100`);
+    button.style.gridColumn = String(index + 1); button.style.setProperty('--ready-phase', String(((state.uiTime||0)%0.8)/0.8)); button.setAttribute('aria-label', `${spec.name}·${spec.professionLabel}·${spec.ultimate}，能量 ${Math.floor(hero.energy)}/100`);
     button.textContent = ready ? `${spec.professionLabel}｜可释放\n${spec.ultimate}` : `${spec.professionLabel}｜${Math.floor(hero.energy)}/100\n${spec.ultimate}`;
     if (aiming) button.textContent = `${spec.professionLabel}｜瞄准中\n${spec.ultimate}`;
     button.addEventListener('pointerdown', event => {
