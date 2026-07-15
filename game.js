@@ -136,6 +136,8 @@ const ui = { wave: $('#waveLabel'), level: $('#levelLabel'), wallText: $('#wallT
 let state, lastTime = performance.now(), raf, mode = 'lobby', toastTimer, battleFeedbackTimer, tapeInteractionSerial = 0;
 const AIM_BOUNDS = Object.freeze({ left:48, right:342, top:48, bottom:555, cancel:{left:130,right:260,top:590,bottom:630} });
 const ULTIMATE_LANES = Object.freeze([60,126,195,264,330]);
+const ULTIMATE_AIM_THRESHOLD_CSS = 8;
+const BATTLE_TIME_SCALE = Object.freeze({ normal:1, aiming:.25 });
 const reducedMotionQuery = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)');
 const prefersReducedMotion = () => Boolean(reducedMotionQuery?.matches);
 
@@ -211,6 +213,7 @@ function canvasPointFromEvent(event) {
   return { x:(event.clientX-rect.left)*GAME_CONFIG.arena.width/rect.width, y:(event.clientY-rect.top)*GAME_CONFIG.arena.height/rect.height };
 }
 function pointInAimBounds(point) { return Boolean(point) && point.x >= AIM_BOUNDS.left && point.x <= AIM_BOUNDS.right && point.y >= AIM_BOUNDS.top && point.y <= AIM_BOUNDS.bottom; }
+function pointInLaneAimBounds(point) { return Boolean(point) && point.x >= 0 && point.x <= GAME_CONFIG.arena.width && point.y >= AIM_BOUNDS.top && point.y <= AIM_BOUNDS.bottom; }
 function pointInAimCancel(point) { return Boolean(point) && point.x >= AIM_BOUNDS.cancel.left && point.x <= AIM_BOUNDS.cancel.right && point.y >= AIM_BOUNDS.cancel.top && point.y <= AIM_BOUNDS.cancel.bottom; }
 function clampAimPoint(point) { return {x:Math.max(AIM_BOUNDS.left,Math.min(AIM_BOUNDS.right,point.x)),y:Math.max(AIM_BOUNDS.top,Math.min(AIM_BOUNDS.bottom,point.y))}; }
 function ultimateKind(hero) { return hero.id === 'guanyu' ? 'lane' : hero.id === 'arthur' || hero.id === 'monk' ? 'point' : 'auto'; }
@@ -273,48 +276,133 @@ function guanyuFleetPlan(hero, preferredLane=null) {
   if (preferredLane !== null && preferredLane !== undefined) { const at=lanes.indexOf(preferredLane); if(at>0) lanes.splice(at,1),lanes.unshift(preferredLane); }
   return {seed,count,lanes:lanes.slice(0,count),preferredLane};
 }
-function restoreUltimateAimRunning(aim) {
-  if (!state || !aim?.wasRunning || state.ended || state.modalKind || state.tapeInteraction || state.waveClearPending || state.pendingVictory || !GAME_CONFIG.waves[state.wave] || (!state.enemies.length && !state.spawnQueue.length)) return false;
-  state.running=true;
-  return true;
+function isUltimateAimActive(aim=state?.ultimateAimInteraction) { return Boolean(aim && !aim.finished && aim.phase === 'aiming'); }
+function currentBattleTimeScale() { return state?.timeScale === BATTLE_TIME_SCALE.aiming && isUltimateAimActive() ? BATTLE_TIME_SCALE.aiming : BATTLE_TIME_SCALE.normal; }
+function syncUltimateAimPresentation() {
+  const active=isUltimateAimActive();
+  ui.battle?.classList?.toggle('ultimate-aim-active',active);
+  ui.tapeTray?.classList?.toggle('aim-locked',active);
+}
+function detachUltimatePointerListeners(aim) {
+  if (!aim?.listeners) return;
+  const {move,up,cancel}=aim.listeners;
+  aim.button?.removeEventListener?.('pointermove',move);
+  aim.button?.removeEventListener?.('pointerup',up);
+  aim.button?.removeEventListener?.('pointercancel',cancel);
+  aim.button?.removeEventListener?.('lostpointercapture',cancel);
+  document.removeEventListener?.('pointermove',move,true);
+  document.removeEventListener?.('pointerup',up,true);
+  document.removeEventListener?.('pointercancel',cancel,true);
+  globalThis.removeEventListener?.('pointermove',move,true);
+  globalThis.removeEventListener?.('pointerup',up,true);
+  globalThis.removeEventListener?.('pointercancel',cancel,true);
+  aim.listeners=null;
 }
 function endUltimateAim(reason='', feedback=false) {
   const aim=state?.ultimateAimInteraction;
-  if (!aim) return;
+  if (!aim) {
+    if(state)state.timeScale=BATTLE_TIME_SCALE.normal;
+    syncUltimateAimPresentation();
+    return null;
+  }
+  aim.finished=true;aim.phase='finished';
   state.ultimateAimInteraction=null;
+  state.timeScale=BATTLE_TIME_SCALE.normal;
+  detachUltimatePointerListeners(aim);
   try { aim.button?.releasePointerCapture?.(aim.pointerId); } catch (_) {}
-  ui.tapeTray?.classList.remove('aim-locked');
-  restoreUltimateAimRunning(aim);
-  syncUltimateButtons();
+  syncUltimateAimPresentation();
+  refreshUltimateButtons();
   if (feedback && reason) showBattleFeedback(reason);
+  return aim;
 }
 function updateUltimateAimPreview(aim, event) {
   const raw=canvasPointFromEvent(event); aim.raw=raw;
-  if (aim.kind === 'lane') aim.preview={laneIndex:ULTIMATE_LANES.reduce((best,x,index)=>Math.abs(raw.x-x)<Math.abs(raw.x-ULTIMATE_LANES[best])?index:best,0)};
+  if (aim.kind === 'lane') aim.preview={laneIndex:ULTIMATE_LANES.reduce((best,x,index)=>Math.abs(raw.x-x)<Math.abs(raw.x-ULTIMATE_LANES[best])?index:best,0),valid:pointInLaneAimBounds(raw)};
   else aim.preview={point:raw,valid:pointInAimBounds(raw)};
+}
+function ultimateAimCanContinue(aim=state?.ultimateAimInteraction) {
+  if (!state || !aim || aim.finished || state.ultimateAimInteraction!==aim || state.ended || state.modalKind || state.tapeInteraction || !state.running) return false;
+  const hero=state.heroes.find(item=>item.id===aim.heroId);
+  return Boolean(hero && ultimateKind(hero)!=='auto' && !ultimateBlockReason(hero,{allowManualAim:true}));
+}
+function addUltimatePointerTravel(aim,event) {
+  if (!aim || !Number.isFinite(event?.clientX) || !Number.isFinite(event?.clientY)) return aim?.travelCss||0;
+  const next={x:event.clientX,y:event.clientY},last=aim.lastClient||aim.startClient;
+  aim.travelCss=(aim.travelCss||0)+Math.hypot(next.x-last.x,next.y-last.y);
+  aim.lastClient=next;
+  return aim.travelCss;
+}
+function activateUltimateAim(aim,event) {
+  if (!ultimateAimCanContinue(aim)) { endUltimateAim('',false); return false; }
+  aim.phase='aiming';aim.activatedAtUiTime=state.uiTime||0;
+  state.timeScale=BATTLE_TIME_SCALE.aiming;
+  updateUltimateAimPreview(aim,event);
+  syncUltimateAimPresentation();
+  refreshUltimateButtons();
+  return true;
 }
 function beginUltimatePointer(event, hero, button) {
   if (!state || state.ended || state.tapeInteraction || state.ultimateAimInteraction || !event.isPrimary || (event.button !== undefined && event.button !== 0)) return;
-  const reason=ultimateBlockReason(hero,{allowManualAim:true}); if(reason){showBattleFeedback(reason);return;}
-  event.preventDefault(); try { button.setPointerCapture?.(event.pointerId); } catch (_) {}
-  const kind=ultimateKind(hero), startClient={x:event.clientX,y:event.clientY}, aim={heroId:hero.id,kind,pointerId:event.pointerId,button,startClient,moved:false,wasRunning:state.running,preview:null};
-  if(kind==='point'){const point=hero.id==='arthur'?bestShieldPoint(hero):bestMonkPoint(hero);aim.preview={point,valid:pointInAimBounds(point)};}
-  if(kind==='lane') aim.preview={laneIndex:guanyuAutoLane()};
-  state.ultimateAimInteraction=aim; ui.tapeTray?.classList.add('aim-locked');
-  if(kind!=='auto'){state.running=false;button.classList.add('aiming');button.textContent=`${GAME_CONFIG.heroes[hero.id].professionLabel}｜瞄准中\n${GAME_CONFIG.heroes[hero.id].ultimate}`;}
-  const move=ev=>{if(state?.ultimateAimInteraction!==aim||ev.pointerId!==aim.pointerId)return;const dx=ev.clientX-aim.startClient.x,dy=ev.clientY-aim.startClient.y,delta=kind==='lane'?Math.abs(dx):Math.hypot(dx,dy);if(delta>=8)aim.moved=true;if(aim.moved&&kind!=='auto')updateUltimateAimPreview(aim,ev);};
-  const cancel=ev=>{if(ev?.pointerId!==undefined&&ev.pointerId!==aim.pointerId)return;button.removeEventListener('pointermove',move);if(state?.ultimateAimInteraction===aim)endUltimateAim(kind==='auto'&&aim.moved?'拖动已取消':'已取消瞄准',false);};
-  const release=()=>{if(state?.ultimateAimInteraction===aim)state.ultimateAimInteraction=null;try{button.releasePointerCapture?.(aim.pointerId);}catch(_){}ui.tapeTray?.classList.remove('aim-locked');};
-  const up=ev=>{if(ev.pointerId!==aim.pointerId||state?.ultimateAimInteraction!==aim)return;button.removeEventListener('pointermove',move);const dx=ev.clientX-aim.startClient.x,dy=ev.clientY-aim.startClient.y,delta=kind==='lane'?Math.abs(dx):Math.hypot(dx,dy);if(delta>=8)aim.moved=true;if(kind==='auto'){if(aim.moved){endUltimateAim('拖动已取消',true);return;}release();useUltimate(hero);return;}if(aim.moved)updateUltimateAimPreview(aim,ev);const raw=aim.moved?aim.raw:null;if(raw&&pointInAimCancel(raw)){endUltimateAim('已取消瞄准',false);return;}const payload=kind==='lane'?{laneIndex:aim.preview?.laneIndex,manual:aim.moved}:{point:aim.moved?raw:aim.preview?.point,manual:aim.moved};if(kind==='point'&&payload.point&&!pointInAimBounds(payload.point)){endUltimateAim('目标区域外，未释放',true);return;}release();restoreUltimateAimRunning(aim);syncUltimateButtons();useUltimate(hero,payload);};
-  button.addEventListener('pointermove',move);button.addEventListener('pointerup',up,{once:true});button.addEventListener('pointercancel',cancel,{once:true});button.addEventListener('lostpointercapture',cancel,{once:true});
+  const kind=ultimateKind(hero),reason=ultimateBlockReason(hero,{allowManualAim:kind!=='auto'});if(reason){showBattleFeedback(reason);return false;}
+  event.preventDefault?.();
+  if(kind==='auto'){useUltimate(hero);return true;}
+  const startClient={x:event.clientX,y:event.clientY},aim={heroId:hero.id,kind,pointerId:event.pointerId,button,startClient,lastClient:startClient,travelCss:0,phase:'press',finished:false,preview:null,raw:null,listeners:null,sessionRef:state};
+  state.ultimateAimInteraction=aim;state.timeScale=BATTLE_TIME_SCALE.normal;
+  const move=ev=>{
+    if(state?.ultimateAimInteraction!==aim||aim.finished||ev.pointerId!==aim.pointerId)return;
+    ev.preventDefault?.();addUltimatePointerTravel(aim,ev);
+    if(aim.phase==='press'&&aim.travelCss>=ULTIMATE_AIM_THRESHOLD_CSS&&!activateUltimateAim(aim,ev))return;
+    if(aim.phase==='aiming')updateUltimateAimPreview(aim,ev);
+  };
+  const cancel=ev=>{if(ev?.pointerId!==undefined&&ev.pointerId!==aim.pointerId)return;if(state?.ultimateAimInteraction===aim)endUltimateAim('已取消瞄准',false);};
+  const up=ev=>{
+    if(ev?.pointerId!==aim.pointerId||state?.ultimateAimInteraction!==aim||aim.finished)return;
+    ev.preventDefault?.();ev.stopPropagation?.();
+    addUltimatePointerTravel(aim,ev);
+    if(aim.phase==='press'&&aim.travelCss>=ULTIMATE_AIM_THRESHOLD_CSS&&!activateUltimateAim(aim,ev))return;
+    if(aim.phase==='press'){endUltimateAim('',false);useUltimate(hero);return;}
+    if(!ultimateAimCanContinue(aim)){endUltimateAim('',false);return;}
+    updateUltimateAimPreview(aim,ev);const raw=aim.raw;
+    if(raw&&pointInAimCancel(raw)){endUltimateAim('已取消瞄准',false);return;}
+    const payload=kind==='lane'?{laneIndex:aim.preview?.laneIndex,manual:true}:{point:raw,manual:true};
+    if(kind==='lane'&&!aim.preview?.valid){endUltimateAim('目标区域外，未释放',true);return;}
+    if(kind==='point'&&(!payload.point||!pointInAimBounds(payload.point))){endUltimateAim('目标区域外，未释放',true);return;}
+    endUltimateAim('',false);useUltimate(hero,payload);
+  };
+  aim.listeners={move,up,cancel};
+  button.addEventListener?.('pointermove',move);button.addEventListener?.('pointerup',up);button.addEventListener?.('pointercancel',cancel);button.addEventListener?.('lostpointercapture',cancel);
+  document.addEventListener?.('pointermove',move,{capture:true,passive:false});document.addEventListener?.('pointerup',up,true);document.addEventListener?.('pointercancel',cancel,true);
+  globalThis.addEventListener?.('pointermove',move,{capture:true,passive:false});globalThis.addEventListener?.('pointerup',up,true);globalThis.addEventListener?.('pointercancel',cancel,true);
+  try { button.setPointerCapture?.(event.pointerId); } catch (_) {}
+  refreshUltimateButtons();
+  return true;
+}
+function heroUltimateSustainedStatus(hero) {
+  if (!hero || !state) return '';
+  if (hero.id==='laser'&&hero.laserUlt>0) return `镭爆 ${hero.laserUlt.toFixed(1)}s`;
+  if (hero.id==='princess'&&state.needles.some(needle=>needle.hero==='princess'&&needle.state==='returning')) return '回针中';
+  if (hero.id==='arthur'&&state.arthurShield?.hero===hero) return `圣盾 ${Math.max(0,state.arthurShield.time).toFixed(1)}s`;
+  if (hero.id==='guanyu'&&state.cars.some(car=>car.hero==='guanyu'&&car.giant)) return '车队行进';
+  if (hero.id==='monk'&&state.superMonks.some(item=>item.hero==='monk')) return '超级木鱼';
+  return '';
+}
+function ultimateVisualState(hero) {
+  const availability=ultimateAvailability(hero),aiming=isUltimateAimActive()&&state.ultimateAimInteraction.heroId===hero.id,sustained=heroUltimateSustainedStatus(hero);
+  if(aiming)return {kind:'aiming',status:'瞄准中',overlay:true,pulse:false,dimmed:false};
+  if(sustained)return {kind:'sustained',status:sustained,overlay:false,pulse:false,dimmed:isUltimateAimActive()};
+  if(availability.kind==='ready')return {kind:'ready',status:'可释放',overlay:true,pulse:true,dimmed:isUltimateAimActive()};
+  if(availability.kind==='precast')return {kind:'precast',status:'可预设',overlay:true,pulse:true,dimmed:isUltimateAimActive()};
+  if(availability.kind==='waiting'||availability.kind==='blocked')return {kind:availability.kind,status:'暂不可用',overlay:false,pulse:false,dimmed:isUltimateAimActive()};
+  return {kind:'charging',status:'蓄能中',overlay:false,pulse:false,dimmed:isUltimateAimActive()};
 }
 function applyUltimateButtonState(button, hero, index) {
-  const spec=GAME_CONFIG.heroes[hero.id],availability=ultimateAvailability(hero),aiming=state.ultimateAimInteraction?.heroId===hero.id;
+  const spec=GAME_CONFIG.heroes[hero.id],visual=ultimateVisualState(hero),aiming=visual.kind==='aiming';
   const tapeClasses=String(button.className||'').split(/\s+/).filter(name=>name==='tape-valid'||name==='tape-invalid');
-  button.className=['ultimate-button',availability.kind!=='charging'?availability.kind:'',aiming?'aiming':'',...tapeClasses].filter(Boolean).join(' ');
+  button.className=['ultimate-button',visual.kind!=='charging'?visual.kind:'',visual.overlay?'ultimate-overlay':'',visual.pulse?'ultimate-pulse':'',visual.dimmed?'aim-muted':'',...tapeClasses].filter(Boolean).join(' ');
+  button.disabled=Boolean(isUltimateAimActive()&&!aiming);
   button.style.gridColumn=String(index+1);button.style.setProperty('--ready-phase',String(((state.uiTime||0)%0.8)/0.8));
-  button.setAttribute('aria-label',`${spec.name}·${spec.professionLabel}·${spec.ultimate}，能量 ${Math.floor(hero.energy)}/100，${aiming?'瞄准中':availability.status}`);
-  button.textContent=aiming?`${spec.professionLabel}｜瞄准中\n${spec.ultimate}`:availability.kind==='charging'?`${spec.professionLabel}｜${Math.floor(hero.energy)}/100\n${spec.ultimate}`:`能量满·${availability.status}\n${spec.ultimate}`;
+  button.setAttribute('aria-label',`${spec.name}·${spec.professionLabel}·${spec.ultimate}，能量 ${Math.floor(hero.energy)}/100，${visual.status}`);
+  button.textContent=visual.kind==='charging'?`${spec.professionLabel}｜${Math.floor(hero.energy)}/100\n${spec.ultimate}`:`能量满·${visual.status}\n${spec.ultimate}`;
 }
 function refreshUltimateButtons() {
   if (!state || !ui.ultimateControls) return;
@@ -324,6 +412,7 @@ function refreshUltimateButtons() {
 }
 function syncUltimateButtons() {
   if (!state || !ui.ultimateControls) return;
+  if(state.ultimateAimInteraction&&(ui.ultimateControls.children||[]).length===state.heroes.length){refreshUltimateButtons();return;}
   ui.ultimateControls.replaceChildren();
   state.heroes.forEach((hero, index) => {
     const button = document.createElement('button');
@@ -337,7 +426,7 @@ function syncUltimateButtons() {
     });
     button.addEventListener('click', event => {
       if (state.ultimateAimInteraction) return;
-      if (event.detail > 0 && button.dataset.pointerHandled === '1') { button.dataset.pointerHandled=''; return; }
+      if (button.dataset.pointerHandled === '1') { button.dataset.pointerHandled=''; return; }
       const tape = state.tapeInteraction?.tape;
       if (tape && state.tapeInteraction.stage === 'selected') { if(!submitTrayTape(tape, hero)) scheduleTapeFinish(state.tapeInteraction,180); }
       else if (event.offsetY >= 65) { const slot=Math.max(0,Math.min(2,Math.floor(event.offsetX/(button.clientWidth||58)*3))); if(hero.tapes[slot])openTapeDetail(hero,hero.tapes[slot]); }
@@ -400,7 +489,7 @@ function useUltimate(hero, payload = null) {
 }
 
 function newState() {
-  return { running: false, ended: false, pendingVictory: false, waveClearPending: false, modalKind: 'hero', level: 1, xp: 0, wallHp: GAME_CONFIG.wall.maxHp, wallMax: GAME_CONFIG.wall.maxHp, wallShield: 0, shieldTimer: 0, elapsed: 0, uiTime:0, wallHitSecond: -1, wallHitCounts: new Map(), wave: 0, waveTapeAwarded: false, waveDeaths:0, waveEnemyTotal:0, discsThisRun: 0, enemySerial:0, needleSerial:0, guanyuSerial:0, guanyuSeed:2463534242, tapeTarget:null, tapeDrop: null, tapeQueue: [], pendingTape: null, tapeTray:[],tapeOverflowQueue:[],overflowDraining:null,tapeInteraction:null,ultimateAimInteraction:null,tapeFlying:[], spawnQueue: [], spawnTimer: 0, intermission: 0, enemies: [], shots: [], needles: [], blades: [], cars: [], monkFish:[], scriptures:[], superMonks:[], arthurShield:null, ultimates: [], effects: [], heroes: [], global: { damage: 1, interval: 1, pierce: 0, crit: 0, xp: 1 }, evolutions: new Set(), kills: 0 };
+  return { running: false, ended: false, pendingVictory: false, waveClearPending: false, modalKind: 'hero', level: 1, xp: 0, wallHp: GAME_CONFIG.wall.maxHp, wallMax: GAME_CONFIG.wall.maxHp, wallShield: 0, shieldTimer: 0, elapsed: 0, uiTime:0, timeScale:BATTLE_TIME_SCALE.normal, wallHitSecond: -1, wallHitCounts: new Map(), wave: 0, waveTapeAwarded: false, waveDeaths:0, waveEnemyTotal:0, discsThisRun: 0, enemySerial:0, needleSerial:0, guanyuSerial:0, guanyuSeed:2463534242, tapeTarget:null, tapeDrop: null, tapeQueue: [], pendingTape: null, tapeTray:[],tapeOverflowQueue:[],overflowDraining:null,tapeInteraction:null,ultimateAimInteraction:null,tapeFlying:[], spawnQueue: [], spawnTimer: 0, intermission: 0, enemies: [], shots: [], needles: [], blades: [], cars: [], monkFish:[], scriptures:[], superMonks:[], arthurShield:null, ultimates: [], effects: [], heroes: [], global: { damage: 1, interval: 1, pierce: 0, crit: 0, xp: 1 }, evolutions: new Set(), kills: 0 };
 }
 function sample(arr, count) { const pool = [...arr], out = []; while (pool.length && out.length < count) out.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]); return out; }
 function defaultMods() { return { damage:0, energy:0, slow:0, emberDamage:0, emberBurn:0, freeze:0, bossFreeze:0, kiteBlades:0, rockHeal:0, rockShield:0,rockKnock:0, starRadius:0, starExtra:0, starExtraPower:0, laserRange:0, laserUltDamage:0, laserUltRadius:0, princessReturnDamage:0, princessReturnWidth:0, arthurShieldHp:0, arthurShieldTime:0, guanyuGiantDamage:0, monkVerseDamage:0,monkPathDamage:0,monkBindRadius:0, ultPower:0, interval:1, energyFlat:0, energyMult:1, wallShieldOnUlt:0, triumph:false, distortion:false }; }
@@ -469,6 +558,7 @@ function scheduleTapeFinish(p,delay=180){
   return true;
 }
 function beginTapeBusiness(tape,stage,previous=state?.tapeInteraction,wasRunning=previous?.wasRunning??state?.running){
+  if(state?.ultimateAimInteraction)endUltimateAim('',false);
   if(previous)finishTapeInteraction(previous,{resume:false,render:false});
   const interaction=makeTapeBusinessInteraction(tape,stage,wasRunning);
   state.tapeInteraction=interaction;
@@ -484,7 +574,8 @@ function v3ConfirmReplace(tape,hero,slot){const old=hero.tapes[slot];if(state.ta
 function submitTrayTape(tape,hero){if(!legalTapeTarget(tape,hero)){showBattleFeedback('无法装备给该梦灵');return false}if(!state.tapeTray.includes(tape))return false;const source=state.tapeInteraction,wasRunning=source?.wasRunning??state.running;const same=hero.tapes.find(x=>isFormalTape(x)&&x.cassetteId===tape.cassetteId&&x.boundHeroId===hero.id&&x.fusionCount<4);if(same){finishTapeInteraction(source,{resume:false,render:false});tape.boundHeroId=hero.id;removeTrayTape(tape);absorbTape(hero,same,wasRunning);return true}if(hero.tapes.length<3){finishTapeInteraction(source,{resume:false,render:false});tape.boundHeroId=hero.id;removeTrayTape(tape);hero.tapes.push(tape);rebuildHeroMods(hero);resumeAfterTapeInteraction(null,wasRunning);return true}v3ReplaceChoice(tape,hero);return true}
 function openTrayDetail(tape,source=state?.tapeInteraction){const interaction=beginTapeBusiness(tape,'detail',source);state.running=false;state.modalKind='trayDetail';ui.modal.classList.remove('hidden');ui.kicker.textContent='暂存卡带';ui.title.textContent=TAPE_CONFIG[tape.cassetteId].name;ui.desc.textContent=`${tape.text}｜${tape.hero?'专属：仅对应梦灵':'通用：投放成功后绑定英雄'}｜拖拽或短按后点选英雄装备。`;ui.choices.replaceChildren();const close=document.createElement('button');close.className='choice';close.type='button';close.textContent='关闭';close.onclick=()=>{state.modalKind=null;ui.modal.classList.add('hidden');resumeAfterTapeInteraction(interaction);};ui.choices.append(close);}
 function beginTrayPointer(e,tape,button){
-  if(!state||state.ended||state.modalKind||state.ultimateAimInteraction||state.tapeInteraction||!state.tapeTray.includes(tape)||(e.isPrimary===false)||(e.button!==undefined&&e.button!==0))return;
+  if(!state||state.ended||state.modalKind||state.tapeInteraction||!state.tapeTray.includes(tape)||(e.isPrimary===false)||(e.button!==undefined&&e.button!==0))return;
+  if(state.ultimateAimInteraction){endUltimateAim('',false);return;}
   e.preventDefault();const p={tape,button,pointerId:e.pointerId,x:e.clientX,y:e.clientY,drag:false,stage:'press',phase:'press',holdTimer:null,settleTimer:null,sessionRef:state,interactionId:++tapeInteractionSerial,wasRunning:state.running,finished:false,listeners:null};state.tapeInteraction=p;
   const cleanIfStale=()=>{if(p.finished)return true;if(state===p.sessionRef&&state.tapeInteraction===p)return false;finishTapeInteraction(p,{resume:false,render:false});return true;};
   const move=ev=>{if(ev.pointerId!==p.pointerId||cleanIfStale())return;ev.preventDefault?.();const dx=ev.clientX-p.x,dy=ev.clientY-p.y;if(!p.drag&&Math.hypot(dx,dy)>=8){clearTimeout(p.holdTimer);p.drag=true;p.stage='drag';p.phase='drag';state.running=false;button.classList.add('dragging');const g=document.createElement('div');g.className='tape-ghost';document.body.append(g);p.ghost=g;markTapeTargets(tape)}if(p.drag&&p.ghost){p.ghost.style.left=ev.clientX+'px';p.ghost.style.top=ev.clientY+'px'}};
@@ -494,7 +585,7 @@ function beginTrayPointer(e,tape,button){
   p.holdTimer=setTimeout(()=>{if(p.finished)return;if(cleanIfStale())return;if(p.phase==='press')openTrayDetail(tape,p)},350);
 }
 function nextTraySlot(){const reserved=new Set(state.tapeFlying.map(f=>f.targetSlot));if(state.overflowDraining)reserved.add(state.overflowDraining.targetSlot);for(let i=0;i<TAPE_TRAY_CAPACITY;i++)if(i>=state.tapeTray.length&&!reserved.has(i))return i;return -1;}
-function pickGroundTape(){if(!state?.tapeDrop||state.ended)return false;const slot=nextTraySlot();if(slot<0){showBattleFeedback('暂存栏已满');return false}const tape=state.tapeDrop;state.tapeDrop=null;state.tapeFlying.push({tape,x:tape.x,y:tape.y,time:.4,targetSlot:slot});renderTapeTray();return true;}
+function pickGroundTape(){if(!state?.tapeDrop||state.ended)return false;if(state.ultimateAimInteraction)endUltimateAim('',false);const slot=nextTraySlot();if(slot<0){showBattleFeedback('暂存栏已满');return false}const tape=state.tapeDrop;state.tapeDrop=null;state.tapeFlying.push({tape,x:tape.x,y:tape.y,time:.4,targetSlot:slot});renderTapeTray();return true;}
 function resolveFlightSlot(flight){const reserved=new Set(state.tapeFlying.filter(f=>f!==flight).map(f=>f.targetSlot));if(state.overflowDraining)reserved.add(state.overflowDraining.targetSlot);for(let i=0;i<TAPE_TRAY_CAPACITY;i++)if(i>=state.tapeTray.length&&!reserved.has(i)){flight.targetSlot=i;return i}return flight.targetSlot;}
 function tapeFlightTarget(flight){const index=resolveFlightSlot(flight),fallback={x:14+(index+.5)*(362/TAPE_TRAY_CAPACITY),y:820},slot=ui.tapeTray?.querySelector?.(`[data-tray-slot="${index}"]`),rect=slot?.getBoundingClientRect?.(),canvasRect=canvas.getBoundingClientRect();if(!rect||!canvasRect.width||!canvasRect.height)return fallback;return {x:(rect.left+rect.width/2-canvasRect.left)*GAME_CONFIG.arena.width/canvasRect.width,y:(rect.top+rect.height/2-canvasRect.top)*GAME_CONFIG.arena.height/canvasRect.height};}
 function queueTapeAt(x,y) { if (state.discsThisRun >= 7 || state.waveTapeAwarded || state.ended) return; const tape = rollTape(); if (!tape) return; state.discsThisRun++; state.waveTapeAwarded=true; const drop = { ...tape, x, y }; if (state.modalKind) state.tapeQueue.push(drop); else if (!state.tapeDrop) state.tapeDrop = drop; else state.tapeQueue.push(drop); }
@@ -509,6 +600,7 @@ function rebuildHeroMods(hero) { hero.affixes=hero.tapes.map(tape=>tape.affixId)
 function chooseAffix(hero, alignment){const artifact=['glow_finale','star_conduit','oathwall','triumph'], cursed=['frenzy','black_battery','distortion','night_overclock'];const pool=(alignment==='artifact'?artifact:cursed).filter(id=>!hero.affixes.includes(id)&&!(id==='star_conduit'&&hero.mods.energy>=3));return pool.length?pool[Math.floor(Math.random()*pool.length)]:null}
 function applyAffix(hero,id){const m=hero.mods;if(id==='glow_finale')m.ultPower+=.15;if(id==='star_conduit')m.energyFlat+=1;if(id==='oathwall')m.wallShieldOnUlt=8;if(id==='triumph')m.triumph=true;if(id==='frenzy'){m.damage+=.28;m.energyFlat-=1;}if(id==='black_battery'){m.energyMult*=1.35;m.damage-=.15;}if(id==='distortion'){m.ultPower+=.35;m.distortion=true;}if(id==='night_overclock'){m.interval*=.8;m.ultPower-=.15;}m.ultPower=Math.max(-.5,Math.min(1,m.ultPower));m.interval=Math.max(.3,m.interval)}
 function openTapePanel(tape, lost=false) {
+  if(state?.ultimateAimInteraction)endUltimateAim('',false);
   if (!isFormalTape(tape)) return;
   if(state.modalKind==='level'){state.tapeQueue.push(tape);return}
   const owner=state.heroes.find(hero=>hero.id===(tape.boundHeroId||tape.hero)); const match=owner?.tapes.find(item=>item.cassetteId===tape.cassetteId&&item.boundHeroId===(tape.boundHeroId||owner.id)&&item.fusionCount<4);
@@ -534,7 +626,7 @@ function equipTape(tape, heroId, slot) { const hero=state.heroes.find(item=>item
 function confirmOrangeReplace(tape,heroId,slot){const hero=state.heroes.find(h=>h.id===heroId),old=hero.tapes[slot];ui.kicker.textContent='永久替换确认';ui.title.textContent='替换橙色卡带？';ui.desc.textContent=`替换橙色${old.alignment==='artifact'?'神器':'魔器'}将永久失去额外词条：${old.affixId}`;ui.choices.replaceChildren();const yes=document.createElement('button'),no=document.createElement('button');yes.className=no.className='choice';yes.type=no.type='button';yes.textContent='确认替换';no.textContent='取消';yes.onclick=()=>equipTape(tape,heroId,slot);no.onclick=()=>showTapeSlots(tape,heroId);ui.choices.append(yes,no)}
 function closeTapePanel() { state.pendingTape=null; state.modalKind=null; ui.modal.classList.add('hidden'); if (state.pendingVictory) return win(); trySpawnTape(); if (state.spawnQueue.length||state.enemies.length||state.shots.length) state.running=true; updateUi(); }
 function tapeEffectPreview(tape,level){const data=TAPE_LEVELS[tape.cassetteId]||{},v=key=>data[key]?.[level-1];if(tape.cassetteId==='monk_wood')return `普通木鱼 +${Math.round(v('damage')*100)}%`;if(tape.cassetteId==='monk_echo')return `经文伤害 +${v('monkVerseDamage')}`;if(tape.cassetteId==='monk_bell')return `超级路径 +${v('monkPathDamage')}，禁锢半径 +${v('monkBindRadius')}px`;if(tape.cassetteId==='guanyu_engine')return `普通车伤害 +${Math.round(v('damage')*100)}%`;if(tape.cassetteId==='guanyu_battery')return `有效普通车回能 +${v('energy')}`;if(tape.cassetteId==='guanyu_cargo')return `巨车碰撞基础伤害 +${v('guanyuGiantDamage')}`;return TAPE_CONFIG[tape.cassetteId].text;}
-function openTapeDetail(hero,tape){state.running=false;state.modalKind='tapeDetail';ui.modal.classList.remove('hidden');ui.choices.classList.remove('portrait-choices','finish-actions');const grade=tapeGrade(tape),level=grade==='blue'?1:grade==='purple'?2:3,next=grade==='blue'?'紫Ⅱ':grade==='purple'?'橙Ⅲ':'已达橙Ⅲ',affixText={glow_finale:'耀光尾奏：大招直接值+15%',star_conduit:'星辉传导：有效普攻回能+1',oathwall:'守誓护壁：大招+8墙盾',triumph:'凯旋残响：下次普攻+10能量',frenzy:'狂焰协议：伤害+28%，回能-1',black_battery:'黑潮电池：回能×1.35，伤害-15%',distortion:'失真演出：大招+35%，攻速减缓',night_overclock:'夜幕超频：间隔-20%，大招-15%'};ui.kicker.textContent=`${grade==='orange'?'橙Ⅲ':grade==='purple'?'紫Ⅱ':'蓝Ⅰ'} · ${hero.id}`;ui.title.textContent=TAPE_CONFIG[tape.cassetteId].name;ui.desc.textContent=`绑定：${GAME_CONFIG.heroes[hero.id].name}｜当前 ${grade}：${tapeEffectPreview(tape,level)}｜${tape.fusionCount===3?'素材1/2':`同调 ${tape.fusionCount}/4`}｜下阶：${next}${level<3?`：${tapeEffectPreview(tape,level+1)}`:''}${tape.alignment?`｜${tape.alignment==='artifact'?'神':'魔'}：${affixText[tape.affixId]||tape.affixId}`:''}`;ui.choices.replaceChildren();if(grade!=='orange'){const b=document.createElement('button');b.className='choice';b.type='button';b.textContent=state.tapeTarget?.heroId===hero.id&&state.tapeTarget?.cassetteId===tape.cassetteId?'取消同调目标':'设为同调目标';b.onclick=()=>{if(state.tapeTarget?.heroId===hero.id&&state.tapeTarget?.cassetteId===tape.cassetteId)state.tapeTarget=null;else state.tapeTarget={heroId:hero.id,cassetteId:tape.cassetteId};openTapeDetail(hero,tape)};ui.choices.append(b)}const c=document.createElement('button');c.className='choice';c.type='button';c.textContent='关闭';c.onclick=()=>{state.modalKind=null;ui.modal.classList.add('hidden');if(state.enemies.length||state.spawnQueue.length)state.running=true};ui.choices.append(c)}
+function openTapeDetail(hero,tape){if(state?.ultimateAimInteraction)endUltimateAim('',false);state.running=false;state.modalKind='tapeDetail';ui.modal.classList.remove('hidden');ui.choices.classList.remove('portrait-choices','finish-actions');const grade=tapeGrade(tape),level=grade==='blue'?1:grade==='purple'?2:3,next=grade==='blue'?'紫Ⅱ':grade==='purple'?'橙Ⅲ':'已达橙Ⅲ',affixText={glow_finale:'耀光尾奏：大招直接值+15%',star_conduit:'星辉传导：有效普攻回能+1',oathwall:'守誓护壁：大招+8墙盾',triumph:'凯旋残响：下次普攻+10能量',frenzy:'狂焰协议：伤害+28%，回能-1',black_battery:'黑潮电池：回能×1.35，伤害-15%',distortion:'失真演出：大招+35%，攻速减缓',night_overclock:'夜幕超频：间隔-20%，大招-15%'};ui.kicker.textContent=`${grade==='orange'?'橙Ⅲ':grade==='purple'?'紫Ⅱ':'蓝Ⅰ'} · ${hero.id}`;ui.title.textContent=TAPE_CONFIG[tape.cassetteId].name;ui.desc.textContent=`绑定：${GAME_CONFIG.heroes[hero.id].name}｜当前 ${grade}：${tapeEffectPreview(tape,level)}｜${tape.fusionCount===3?'素材1/2':`同调 ${tape.fusionCount}/4`}｜下阶：${next}${level<3?`：${tapeEffectPreview(tape,level+1)}`:''}${tape.alignment?`｜${tape.alignment==='artifact'?'神':'魔'}：${affixText[tape.affixId]||tape.affixId}`:''}`;ui.choices.replaceChildren();if(grade!=='orange'){const b=document.createElement('button');b.className='choice';b.type='button';b.textContent=state.tapeTarget?.heroId===hero.id&&state.tapeTarget?.cassetteId===tape.cassetteId?'取消同调目标':'设为同调目标';b.onclick=()=>{if(state.tapeTarget?.heroId===hero.id&&state.tapeTarget?.cassetteId===tape.cassetteId)state.tapeTarget=null;else state.tapeTarget={heroId:hero.id,cassetteId:tape.cassetteId};openTapeDetail(hero,tape)};ui.choices.append(b)}const c=document.createElement('button');c.className='choice';c.type='button';c.textContent='关闭';c.onclick=()=>{state.modalKind=null;ui.modal.classList.add('hidden');if(state.enemies.length||state.spawnQueue.length)state.running=true};ui.choices.append(c)}
 function absorbTape(hero,equipped,wasRunning=state?.tapeInteraction?.wasRunning??state?.running){
   const fusionSession=state;
   const interaction=beginTapeBusiness(equipped,'fusion',fusionSession.tapeInteraction,wasRunning);
@@ -553,6 +645,7 @@ function absorbTape(hero,equipped,wasRunning=state?.tapeInteraction?.wasRunning?
 }
 function xpNeed() { return Math.round(GAME_CONFIG.xp.baseNeed * Math.pow(GAME_CONFIG.xp.growth, state.level - 1)); }
 function showChoices(kind) {
+  if(state?.ultimateAimInteraction)endUltimateAim('',false);
   state.running = false; state.modalKind = kind; ui.modal.classList.remove('hidden');
   ui.choices.classList.remove('finish-actions');
   ui.choices.classList.add('portrait-choices');
@@ -629,6 +722,7 @@ function choose(option) {
   updateUi();
 }
 function startWave() {
+  if(state?.ultimateAimInteraction)endUltimateAim('',false);
   const wave = GAME_CONFIG.waves[state.wave];
   if (!wave) return win();
   state.waveTapeAwarded = false; state.waveDeaths=0; state.waveEnemyTotal=wave.entries.reduce((sum,[,amount])=>sum+amount,0); state.spawnQueue = wave.entries.flatMap(([id, amount]) => Array.from({ length: amount }, () => id));
@@ -641,19 +735,24 @@ function spawnEnemy(id) {
   state.enemies.push({ id, spawnOrder:state.enemySerial++, x: 38 + Math.random() * (GAME_CONFIG.arena.width - 76), y: BATTLEFIELD_TOP_Y, hp: type.hp * scaling, maxHp: type.hp * scaling, slow: 0, slowStrength:0, carSlowRemaining:0, carSlowStrength:0, frozen: 0, stun:0,stunResist:0,bind:0, hitCd: type.attackInterval * .5, flash: 0 });
 }
 function update(dt) {
-  if (!state || state.ended) return;
+  if (!state) return;
+  if (state.ended) { if(state.ultimateAimInteraction)endUltimateAim('',false); return; }
   state.uiTime=(state.uiTime||0)+dt;
+  for(const hero of state.heroes)if(hero.attackFeedback>0)hero.attackFeedback=Math.max(0,hero.attackFeedback-dt);
   for(const f of [...state.tapeFlying]){f.time-=dt;if(f.time<=0){remove(state.tapeFlying,f);storeTape(f.tape);}}
   const draining=state.overflowDraining;
   if(draining){draining.time-=dt;if(draining.time<=0){if(state.tapeOverflowQueue[0]===draining.tape&&state.tapeTray.length<TAPE_TRAY_CAPACITY){state.tapeOverflowQueue.shift();state.tapeTray.push(draining.tape);}state.overflowDraining=null;fillTapeTray();}}
+  if(state.ultimateAimInteraction&&!ultimateAimCanContinue(state.ultimateAimInteraction))endUltimateAim('',false);
   if (!state.running) { refreshUltimateButtons(); return; }
-  state.elapsed += dt;
+  const battleDt=dt*currentBattleTimeScale();
+  state.elapsed += battleDt;
   const wave = GAME_CONFIG.waves[state.wave];
-  state.spawnTimer -= dt;
+  state.spawnTimer -= battleDt;
   if (state.spawnQueue.length && state.enemies.length < GAME_CONFIG.arena.enemyLimit && state.spawnTimer <= 0) { spawnEnemy(state.spawnQueue.shift()); state.spawnTimer = wave.cadence; }
-  updateEnemies(dt); if (state.ended) return;
-  updateUltimates(dt); updateArthurShield(dt); updateHeroes(dt); updateShots(dt); updateNeedles(dt); updateBlades(dt); updateCars(dt); updateMonk(dt); updateSuperMonks(dt); updateEffects(dt);
+  updateEnemies(battleDt); if (state.ended) return;
+  updateUltimates(battleDt); updateArthurShield(battleDt); updateHeroes(battleDt); updateShots(battleDt); updateNeedles(battleDt); updateBlades(battleDt); updateCars(battleDt); updateMonk(battleDt); updateSuperMonks(battleDt); updateEffects(battleDt);
   if (!state.spawnQueue.length && !state.enemies.length && !state.shots.length && !state.blades.length && !state.needles.some(needle=>needle.state!=='planted')) {
+    if(state.ultimateAimInteraction)endUltimateAim('',false);
     state.running = false; state.cars=[]; state.monkFish=[]; state.scriptures=[]; state.wave++; state.waveClearPending = true;
     processWaveClearTape();
     if (state.wave >= GAME_CONFIG.waves.length) {
@@ -823,7 +922,6 @@ function updateSuperMonks(dt){for(const s of [...state.superMonks]){const hero=s
 function updateHeroes(dt) {
   for (const hero of state.heroes) {
     const spec = GAME_CONFIG.heroes[hero.id];
-    if(hero.attackFeedback>0)hero.attackFeedback=Math.max(0,hero.attackFeedback-dt);
     if(hero.ultimateFlash>0)hero.ultimateFlash=Math.max(0,hero.ultimateFlash-dt);
     if (hero.distortionTimer) hero.distortionTimer = Math.max(0, hero.distortionTimer - dt);
     if (hero.id === 'laser') {
@@ -946,7 +1044,7 @@ function render() {
   ctx.fillStyle=state.wallShield > 0 ? '#39708c' : '#465574';ctx.fillRect(0,wallY,w,17);ctx.fillStyle='#7d8fa8';for(let x=0;x<w;x+=30){ctx.fillRect(x,wallY-10,20,13);ctx.fillStyle='#aab9c7';ctx.fillRect(x+3,wallY-7,14,3);ctx.fillStyle='#7d8fa8';}if(state.wallShield>0){ctx.strokeStyle='#8deaff';ctx.lineWidth=2;ctx.strokeRect(4,wallY-15,w-8,34);}
   // 顶部裂隙入口。
   ctx.strokeStyle='#b88be4';ctx.shadowColor='#8c64d4';ctx.shadowBlur=14;ctx.lineWidth=3;ctx.beginPath();ctx.ellipse(w/2,91,66,16,0,0,Math.PI*2);ctx.stroke();ctx.shadowBlur=0;
-  for(const e of state.enemies) drawEnemy(e); drawArthurShield(); drawLasers(); for(const s of state.superMonks) drawSuperMonk(s); for(const blade of state.blades) drawBlade(blade); for(const car of state.cars) drawCar(car); for(const fish of state.monkFish) drawMonkFish(fish); for(const verse of state.scriptures) drawScripture(verse); for(const s of state.shots) drawShot(s); for(const needle of state.needles) drawNeedle(needle); if(state.tapeDrop) drawTapeDrop(state.tapeDrop); for(const flight of state.tapeFlying) drawTapeFlight(flight);if(state.overflowDraining)drawOverflowDrain(state.overflowDraining); for(const e of state.effects) drawEffect(e); drawHeroes();drawPrincessNeedleCount();drawGuanyuCarCount();
+  for(const e of state.enemies) drawEnemy(e); drawArthurShield(); drawLasers(); for(const s of state.superMonks) drawSuperMonk(s); for(const blade of state.blades) drawBlade(blade); for(const car of state.cars) drawCar(car); for(const fish of state.monkFish) drawMonkFish(fish); for(const verse of state.scriptures) drawScripture(verse); for(const s of state.shots) drawShot(s); for(const needle of state.needles) drawNeedle(needle); if(state.tapeDrop) drawTapeDrop(state.tapeDrop); for(const flight of state.tapeFlying) drawTapeFlight(flight);if(state.overflowDraining)drawOverflowDrain(state.overflowDraining); for(const e of state.effects) drawEffect(e);drawPrincessNeedleCount();drawGuanyuCarCount();if(isUltimateAimActive()){ctx.save();ctx.fillStyle='rgba(5,8,24,0.52)';ctx.fillRect(0,0,w,h);ctx.restore();}drawUltimateAim();drawHeroes();
 }
 function drawEnemy(e) { const t=GAME_CONFIG.enemies[e.id], r=t.radius; ctx.save();ctx.translate(e.x,e.y);ctx.fillStyle=e.flash?'#fff':t.color;ctx.beginPath();ctx.arc(0,0,r,0,Math.PI*2);ctx.fill();ctx.fillStyle='#10152c';ctx.beginPath();ctx.arc(-r*.28,-2,2.5,0,7);ctx.arc(r*.28,-2,2.5,0,7);ctx.fill();if(e.stun>0){ctx.strokeStyle='#ffe48a';ctx.beginPath();ctx.arc(0,-r-6,5,0,7);ctx.stroke();}if(e.bind>0){ctx.strokeStyle='#e9be55';ctx.beginPath();ctx.arc(0,r+4,r*.8,0,7);ctx.stroke();ctx.beginPath();ctx.moveTo(-5,r+4);ctx.lineTo(5,r+4);ctx.stroke();}ctx.restore();ctx.fillStyle='#10152c';ctx.fillRect(e.x-r,e.y-r-8,r*2,4);ctx.fillStyle='#69e28e';ctx.fillRect(e.x-r,e.y-r-8,r*2*Math.max(0,e.hp/e.maxHp),4); if(e.frozen){ctx.strokeStyle='#d7fbff';ctx.strokeRect(e.x-r-2,e.y-r-2,r*2+4,r*2+4);} }
 function drawShot(s) { const c=s.ultimate?'#9fe8ff':GAME_CONFIG.heroes[s.hero].color;ctx.fillStyle=c;ctx.shadowColor=c;ctx.shadowBlur=10;ctx.beginPath();ctx.arc(s.x,s.y,s.ultimate?6:5,0,7);ctx.fill();ctx.shadowBlur=0; }
@@ -966,34 +1064,48 @@ function overflowDrainOrigin(){const fallback={x:350,y:782},badge=ui.tapeTray?.q
 function drawOverflowDrain(drain){const progress=Math.max(0,Math.min(1,1-drain.time/drain.duration)),from=overflowDrainOrigin(),target=tapeFlightTarget(drain),x=from.x+(target.x-from.x)*progress,y=from.y+(target.y-from.y)*progress-24*4*progress*(1-progress);drawTapeDrop({...drain.tape,x,y});}
 function drawEffect(e){ctx.save();ctx.globalAlpha=Math.min(1,e.life*2);if(e.ring){ctx.strokeStyle=e.color;ctx.lineWidth=2;ctx.beginPath();ctx.arc(e.x,e.y,e.ring*(1-e.life/.22*.35),0,7);ctx.stroke();}else{ctx.fillStyle=e.color;ctx.font='bold 11px Microsoft YaHei';ctx.textAlign='center';ctx.fillText(e.text,e.x,e.y);}ctx.restore();}
 function drawHeroMark(id,x,y,color){ctx.save();ctx.translate(x,y);ctx.strokeStyle='#fff';ctx.fillStyle=color;ctx.lineWidth=2;ctx.lineJoin='round';if(id==='ember'){ctx.beginPath();ctx.moveTo(0,-12);ctx.lineTo(8,2);ctx.lineTo(2,2);ctx.lineTo(8,12);ctx.lineTo(-8,5);ctx.lineTo(-3,-1);ctx.closePath();ctx.fill();}else if(id==='frost'){for(let i=0;i<3;i++){ctx.rotate(Math.PI/3);ctx.beginPath();ctx.moveTo(-12,0);ctx.lineTo(12,0);ctx.stroke();}}else if(id==='kite'){ctx.beginPath();ctx.moveTo(0,-13);ctx.lineTo(11,0);ctx.lineTo(0,13);ctx.lineTo(-11,0);ctx.closePath();ctx.stroke();ctx.beginPath();ctx.moveTo(0,-13);ctx.lineTo(0,13);ctx.stroke();}else if(id==='rock'){ctx.beginPath();ctx.moveTo(0,-13);ctx.lineTo(12,-8);ctx.lineTo(10,9);ctx.lineTo(0,14);ctx.lineTo(-10,9);ctx.lineTo(-12,-8);ctx.closePath();ctx.fill();}else if(id==='laser'){ctx.beginPath();ctx.arc(0,0,12,0,7);ctx.stroke();ctx.beginPath();ctx.arc(0,0,4,0,7);ctx.fill();}else if(id==='princess'){ctx.rotate(-.7);ctx.fillRect(-2,-13,4,22);ctx.beginPath();ctx.moveTo(0,-16);ctx.lineTo(5,-9);ctx.lineTo(-5,-9);ctx.closePath();ctx.fill();}else if(id==='guanyu'){ctx.fillRect(-11,-7,22,15);ctx.fillStyle='#ffe7bd';ctx.fillRect(-6,-4,12,7);ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(-6,10,3,0,7);ctx.arc(7,10,3,0,7);ctx.fill();}else{ctx.beginPath();for(let i=0;i<10;i++){const a=-Math.PI/2+i*Math.PI/5,r=i%2?6:13;const px=Math.cos(a)*r,py=Math.sin(a)*r;i?ctx.lineTo(px,py):ctx.moveTo(px,py);}ctx.closePath();ctx.fill();}ctx.restore();}
+function monkUltimateRadius(hero){const m=hero?.mods||defaultMods();return 120+(m.monkBindRadius||0)+18*(hero?.monkFieldStacks||0);}
+function arthurAimTargets(point){if(!point||!pointInAimBounds(point))return [];return state.enemies.filter(e=>Math.hypot(e.x-point.x,e.y-point.y)<=220).sort((a,b)=>Math.hypot(a.x-point.x,a.y-point.y)-Math.hypot(b.x-point.x,b.y-point.y)||b.y-a.y||(a.spawnOrder||0)-(b.spawnOrder||0)).slice(0,5);}
+function ultimateAimTargets(aim=state?.ultimateAimInteraction){
+  if(!isUltimateAimActive(aim))return [];const hero=state.heroes.find(h=>h.id===aim.heroId);if(!hero)return [];
+  if(aim.kind==='lane'){const lane=aim.preview?.laneIndex;if(!Number.isInteger(lane)||!aim.preview?.valid)return [];const x=ULTIMATE_LANES[lane];return state.enemies.filter(e=>Math.abs(e.x-x)<=42);}
+  const point=aim.preview?.point;if(!point||!pointInAimBounds(point))return [];
+  if(hero.id==='arthur')return arthurAimTargets(point);
+  if(hero.id==='monk'){const radius=monkUltimateRadius(hero);return state.enemies.filter(e=>Math.hypot(e.x-point.x,e.y-point.y)<=radius);}
+  return [];
+}
+function drawAimEnemyHighlight(enemy,color='#ffe58d'){
+  const radius=GAME_CONFIG.enemies[enemy.id].radius+7;ctx.save();ctx.strokeStyle=color;ctx.fillStyle=color+'2f';ctx.shadowColor=color;ctx.shadowBlur=9;ctx.lineWidth=3;ctx.beginPath();ctx.arc(enemy.x,enemy.y,radius,0,Math.PI*2);ctx.fill();ctx.stroke();ctx.restore();
+}
 function drawUltimateAim(){
-  const aim=state.ultimateAimInteraction;if(!aim||aim.kind==='auto')return;const hero=state.heroes.find(h=>h.id===aim.heroId);if(!hero)return;
-  ctx.save();ctx.fillStyle='#111936dd';ctx.strokeStyle='#ffe17b';ctx.lineWidth=1.5;ctx.fillRect(AIM_BOUNDS.cancel.left,AIM_BOUNDS.cancel.top,AIM_BOUNDS.cancel.right-AIM_BOUNDS.cancel.left,AIM_BOUNDS.cancel.bottom-AIM_BOUNDS.cancel.top);ctx.strokeRect(AIM_BOUNDS.cancel.left,AIM_BOUNDS.cancel.top,AIM_BOUNDS.cancel.right-AIM_BOUNDS.cancel.left,AIM_BOUNDS.cancel.bottom-AIM_BOUNDS.cancel.top);ctx.fillStyle='#fff0ad';ctx.font='bold 12px Microsoft YaHei';ctx.textAlign='center';ctx.fillText('取消',195,615);
+  const aim=state.ultimateAimInteraction;if(!isUltimateAimActive(aim))return;const hero=state.heroes.find(h=>h.id===aim.heroId);if(!hero)return;
+  const precast=emptySpawnGap(),guide=precast?'#69c8ff':'#ffe17b';ctx.save();ctx.lineCap='round';ctx.lineJoin='round';ctx.setLineDash(precast?[8,6]:[]);
+  ctx.fillStyle='#111936e8';ctx.strokeStyle=guide;ctx.lineWidth=1.5;ctx.fillRect(AIM_BOUNDS.cancel.left,AIM_BOUNDS.cancel.top,AIM_BOUNDS.cancel.right-AIM_BOUNDS.cancel.left,AIM_BOUNDS.cancel.bottom-AIM_BOUNDS.cancel.top);ctx.strokeRect(AIM_BOUNDS.cancel.left,AIM_BOUNDS.cancel.top,AIM_BOUNDS.cancel.right-AIM_BOUNDS.cancel.left,AIM_BOUNDS.cancel.bottom-AIM_BOUNDS.cancel.top);ctx.setLineDash([]);ctx.fillStyle=precast?'#a9e4ff':'#fff0ad';ctx.font='bold 12px Microsoft YaHei';ctx.textAlign='center';ctx.fillText('拖到这里取消',195,615);
   if(aim.kind==='point'){
-    const p=aim.preview?.point || (hero.id==='arthur'?bestShieldPoint(hero):bestMonkPoint(hero));if(!p){ctx.restore();return;}
-    const valid=pointInAimBounds(p),m=hero.mods||defaultMods();ctx.strokeStyle=valid?'#ffe17b':'#ef6e78';ctx.fillStyle=valid?'#ffe17b55':'#ef6e7855';ctx.lineWidth=2;
-    if(hero.id==='arthur'){ctx.beginPath();ctx.arc(p.x,p.y,32,0,7);ctx.fill();ctx.stroke();ctx.globalAlpha=.32;ctx.beginPath();ctx.arc(p.x,p.y,220,0,7);ctx.stroke();ctx.globalAlpha=1;state.enemies.filter(e=>Math.hypot(e.x-p.x,e.y-p.y)<=220).sort((a,b)=>Math.hypot(a.x-p.x,a.y-p.y)-Math.hypot(b.x-p.x,b.y-p.y)||b.y-a.y||(a.spawnOrder||0)-(b.spawnOrder||0)).slice(0,5).forEach(e=>{ctx.strokeStyle='#fff2a3';ctx.strokeRect(e.x-15,e.y-15,30,30);});}
-    else {const radius=120+(m.monkBindRadius||0)+18*(hero.monkFieldStacks||0);ctx.beginPath();ctx.moveTo(heroX(hero),711);ctx.lineTo(p.x,p.y);ctx.stroke();ctx.globalAlpha=.32;ctx.beginPath();ctx.arc(p.x,p.y,radius,0,7);ctx.fill();ctx.globalAlpha=1;ctx.strokeStyle=valid?'#f2cf77':'#ef6e78';ctx.beginPath();ctx.roundRect(p.x-32,p.y-32,64,64,14);ctx.stroke();}
-  } else {const lane=aim.preview?.laneIndex??0,x=ULTIMATE_LANES[lane],plan=guanyuFleetPlan(hero,lane);ctx.fillStyle='#ffcf6a33';ctx.fillRect(x-23,74,46,GAME_CONFIG.arena.wallY-74);ctx.strokeStyle='#ffd36f';ctx.strokeRect(x-23,74,46,GAME_CONFIG.arena.wallY-74);plan.lanes.forEach((index,n)=>{const lx=ULTIMATE_LANES[index];ctx.globalAlpha=.34;ctx.fillStyle='#d34a42';ctx.fillRect(lx-26,620-n*18,52,76);});ctx.globalAlpha=1;ctx.fillStyle='#fff0b0';ctx.font='bold 10px Microsoft YaHei';ctx.fillText(`车队 ${plan.count} 辆`,195,100);}
+    const p=aim.preview?.point;if(!p){ctx.restore();return;}const valid=pointInAimBounds(p),color=valid?guide:'#ef6e78';ctx.strokeStyle=color;ctx.fillStyle=valid?(precast?'#69c8ff2e':'#ffe17b35'):'#ef6e7838';ctx.lineWidth=2.5;ctx.setLineDash(valid&&precast?[8,6]:[]);
+    if(hero.id==='arthur'){ctx.beginPath();ctx.arc(p.x,p.y,32,0,Math.PI*2);ctx.fill();ctx.stroke();ctx.globalAlpha=.56;ctx.beginPath();ctx.arc(p.x,p.y,220,0,Math.PI*2);ctx.stroke();ctx.globalAlpha=1;ctx.setLineDash([]);if(valid)arthurAimTargets(p).forEach(enemy=>drawAimEnemyHighlight(enemy,'#bfe7ff'));ctx.fillStyle=color;ctx.font='bold 10px Microsoft YaHei';ctx.fillText(precast?'预设圣盾 · 敌军生成后诱敌':'圣盾落点 · 最多诱敌5名',p.x,Math.max(34,p.y-42));}
+    else {const radius=monkUltimateRadius(hero);ctx.beginPath();ctx.moveTo(heroX(hero),GAME_CONFIG.arena.wallY);ctx.lineTo(p.x,p.y);ctx.stroke();ctx.globalAlpha=.38;ctx.beginPath();ctx.arc(p.x,p.y,radius,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;ctx.beginPath();ctx.arc(p.x,p.y,radius,0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);ctx.beginPath();ctx.roundRect(p.x-32,p.y-32,64,64,14);ctx.stroke();if(valid)ultimateAimTargets(aim).forEach(enemy=>drawAimEnemyHighlight(enemy,'#f5d77c'));ctx.fillStyle=color;ctx.font='bold 10px Microsoft YaHei';ctx.fillText(precast?'预设木鱼 · 敌军生成后出击':`超级木鱼 · 禁锢半径${Math.round(radius)}`,p.x,Math.max(34,p.y-radius-8));}
+  } else {
+    const lane=aim.preview?.laneIndex??0,x=ULTIMATE_LANES[lane],valid=Boolean(aim.preview?.valid),laneColor=valid?guide:'#ef6e78',plan=guanyuFleetPlan(hero,lane);ctx.strokeStyle=laneColor;ctx.fillStyle=valid?(precast?'#69c8ff26':'#ff9c4238'):'#ef6e7838';ctx.lineWidth=5;ctx.setLineDash(valid&&precast?[10,7]:[]);ctx.fillRect(x-25,BATTLEFIELD_TOP_Y,50,GAME_CONFIG.arena.wallY-BATTLEFIELD_TOP_Y);ctx.beginPath();ctx.moveTo(x,GAME_CONFIG.arena.wallY);ctx.lineTo(x,BATTLEFIELD_TOP_Y);ctx.stroke();ctx.setLineDash([]);if(valid&&!precast)ultimateAimTargets(aim).forEach(enemy=>drawAimEnemyHighlight(enemy,'#ff9c42'));plan.lanes.forEach((index,n)=>{const lx=ULTIMATE_LANES[index];ctx.globalAlpha=.42;ctx.fillStyle=valid?(precast?'#69c8ff':'#d34a42'):'#b74758';ctx.fillRect(lx-26,620-n*18,52,76);});ctx.globalAlpha=1;ctx.fillStyle=laneColor;ctx.font='bold 10px Microsoft YaHei';ctx.fillText(valid?(precast?'预设车道 · 敌军生成后出击':`橙色车道 · 车队${plan.count}辆`):'目标区域外 · 松手取消',195,100);
+  }
   ctx.restore();
 }
 function drawHeroes(){
-  drawUltimateAim();
   const cardY=707,colors={blue:'#75b8ef',purple:'#bd83ef',orange:'#f3cf67'};
   for(const hero of state.heroes){
-    const h=GAME_CONFIG.heroes[hero.id],x=heroX(hero),ratio=hero.energy/hero.energyMax,availability=ultimateAvailability(hero),charged=hero.energy>=hero.energyMax,ready=availability.kind==='ready',precast=availability.kind==='precast',laserActive=hero.id==='laser'&&hero.laserUlt>0,aiming=state.ultimateAimInteraction?.heroId===hero.id,actionable=ready||precast||aiming;
-    const pulse=(ready||precast)&&!aiming&&!prefersReducedMotion()?(.58+.42*((Math.cos((state.uiTime||0)*Math.PI*2/.8)+1)/2)):1;
+    const h=GAME_CONFIG.heroes[hero.id],x=heroX(hero),ratio=hero.energy/hero.energyMax,visual=ultimateVisualState(hero),charged=hero.energy>=hero.energyMax,ready=visual.kind==='ready',precast=visual.kind==='precast',sustained=visual.kind==='sustained',aiming=visual.kind==='aiming',actionable=visual.overlay;
+    const pulse=visual.pulse&&!prefersReducedMotion()?(.58+.42*((Math.cos((state.uiTime||0)*Math.PI*2/.8)+1)/2)):1;ctx.save();if(isUltimateAimActive()){if(aiming){ctx.translate(x,cardY+84);ctx.scale(1.08,1.08);ctx.translate(-x,-cardY-84);}else ctx.globalAlpha=.4;}
     ctx.fillStyle='#0c1230';ctx.beginPath();ctx.roundRect(x-29,cardY,58,84,10);ctx.fill();
-    ctx.strokeStyle=laserActive?'#c386ff':aiming||ready?'#ffd66d':precast?'#6fe0d5':charged?'#76829f':h.color;ctx.lineWidth=laserActive?3:actionable?2:1;ctx.shadowColor=laserActive?'#9b75ff':'transparent';ctx.shadowBlur=laserActive?9:0;ctx.stroke();ctx.shadowBlur=0;
-    if(actionable){ctx.save();ctx.globalAlpha=pulse;ctx.strokeStyle=precast&&!aiming?'#6fe0d5':'#ffd66d';ctx.lineWidth=aiming?3:2;ctx.shadowColor=precast&&!aiming?'#49c9c2':'#f3cd59';ctx.shadowBlur=aiming?8:5;ctx.strokeRect(x-27,cardY+2,54,80);ctx.restore();}
+    if(actionable){ctx.save();ctx.strokeStyle='#ffd66d';ctx.lineWidth=aiming?3:2;ctx.shadowColor='#f3cd59';ctx.shadowBlur=aiming?9:5;if(precast&&!aiming)ctx.setLineDash([5,4]);ctx.stroke();ctx.globalAlpha=aiming?1:pulse;ctx.strokeRect(x-27,cardY+2,54,80);ctx.restore();}
     const scale=heroAttackScale(hero);ctx.save();ctx.translate(x,cardY+19);ctx.scale(scale,scale);ctx.fillStyle=h.color;ctx.beginPath();ctx.arc(0,0,15,0,7);ctx.fill();if(prefersReducedMotion()&&hero.attackFeedback>0){ctx.strokeStyle='#fff5bf';ctx.lineWidth=3;ctx.stroke();}drawHeroMark(hero.id,0,0,h.color);ctx.restore();
     ctx.fillStyle='#e8ecff';ctx.font='bold 10px Microsoft YaHei';ctx.textAlign='center';ctx.fillText(h.name,x,cardY+42);
-    ctx.fillStyle='#27304c';ctx.fillRect(x-21,cardY+48,42,5);ctx.save();ctx.globalAlpha=pulse;ctx.fillStyle=ready?'#f3cd59':precast?'#65ddd2':charged?'#8792aa':'#65d8f2';ctx.fillRect(x-21,cardY+48,42*ratio,5);ctx.restore();
+    ctx.fillStyle='#27304c';ctx.fillRect(x-21,cardY+48,42,5);ctx.save();ctx.globalAlpha=visual.pulse?pulse:1;ctx.fillStyle=ready||precast||aiming?'#f3cd59':charged?'#8792aa':'#65d8f2';ctx.fillRect(x-21,cardY+48,42*ratio,5);ctx.restore();
     ctx.fillStyle='#b9c8e9';ctx.font='9px Microsoft YaHei';ctx.fillText(`${Math.floor(hero.energy)}/${hero.energyMax}`,x,cardY+62);
-    ctx.fillStyle=laserActive?'#d6b9ff':ready?'#ffe889':precast?'#9ff7ec':charged?'#b6bfd2':'#9ee8ff';ctx.font='bold 8px Microsoft YaHei';ctx.fillText(aiming?'瞄准中':laserActive?`镭爆 ${hero.laserUlt.toFixed(1)}s`:availability.status,x,cardY+72);
+    ctx.fillStyle=sustained?'#d6b9ff':ready||precast||aiming?'#ffe889':charged?'#b6bfd2':'#9ee8ff';ctx.font='bold 8px Microsoft YaHei';ctx.fillText(visual.status,x,cardY+72);
     for(let i=0;i<3;i++){const tape=hero.tapes[i],slotX=x-17+i*12,grade=tape&&tapeGrade(tape);ctx.fillStyle='#141b35';ctx.fillRect(slotX,cardY+75,10,7);ctx.strokeStyle=tape?colors[grade]:'#58627f';ctx.lineWidth=tape?1.5:1;ctx.strokeRect(slotX+.5,cardY+75.5,9,6);if(tape){ctx.fillStyle=colors[grade];ctx.font='bold 6px sans-serif';ctx.fillText(grade==='orange'?(tape.alignment==='artifact'?'神':'魔'):grade==='blue'?'Ⅰ':'Ⅱ',slotX+5,cardY+81);if(grade==='orange'&&tape.alignment==='artifact'){ctx.strokeStyle='#ffe889';ctx.shadowColor='#ffd66d';ctx.shadowBlur=5;ctx.beginPath();ctx.arc(slotX+5,cardY+78,7,0,7);ctx.stroke();ctx.shadowBlur=0}if(grade==='orange'&&tape.alignment==='cursed'){ctx.strokeStyle='#8d2530';ctx.shadowColor='#8d2530';ctx.shadowBlur=5;ctx.beginPath();ctx.moveTo(slotX+1,cardY+76);ctx.lineTo(slotX+8,cardY+81);ctx.stroke();ctx.shadowBlur=0}}}
+    ctx.restore();
   }
-  for(let i=state.heroes.length;i<5;i++){const x=55+i*70;ctx.strokeStyle='#67709a';ctx.setLineDash([4,4]);ctx.strokeRect(x-27,cardY,54,84);ctx.setLineDash([]);}
+  ctx.save();if(isUltimateAimActive())ctx.globalAlpha=.4;for(let i=state.heroes.length;i<5;i++){const x=55+i*70;ctx.strokeStyle='#67709a';ctx.setLineDash([4,4]);ctx.strokeRect(x-27,cardY,54,84);ctx.setLineDash([]);}ctx.restore();
 }
 function loop(now){const dt=Math.min(.05,(now-lastTime)/1000);lastTime=now;update(dt);render();raf=requestAnimationFrame(loop);}
 function cancelTapeInteractionForLifecycle(){const interaction=state?.tapeInteraction;if(!interaction)return;if(isActiveTapePointer(interaction)||interaction.stage==='selected')finishTapeInteraction(interaction,{resume:true});}
