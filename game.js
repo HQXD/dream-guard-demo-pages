@@ -164,7 +164,7 @@ function syncUltimateButtons() {
     const spec = GAME_CONFIG.heroes[hero.id], button = document.createElement('button'), ready = hero.energy >= hero.energyMax;
     button.type = 'button'; button.className = `ultimate-button${ready ? ' ready' : ''}`;
     button.style.gridColumn = String(index + 1); button.setAttribute('aria-label', `${spec.name}·${spec.professionLabel}·${spec.ultimate}，能量 ${Math.floor(hero.energy)}/100`);
-    button.textContent = ready ? `${spec.professionLabel}\n可释放` : `${spec.professionLabel}\n${Math.floor(hero.energy)}/100`;
+    button.textContent = ready ? `${spec.professionLabel}｜可释放\n${spec.ultimate}` : `${spec.professionLabel}｜${Math.floor(hero.energy)}/100\n${spec.ultimate}`;
     button.addEventListener('click', event => {
       const tape = state.tapeInteraction?.tape;
       if (tape && state.tapeInteraction.stage === 'selected') { if(!submitTrayTape(tape, hero)) setTimeout(finishTapeInteraction,180); }
