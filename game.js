@@ -342,46 +342,78 @@ function removeTrayTape(tape){const index=state.tapeTray.indexOf(tape);if(index<
 // refreshes cannot silently discard Pointer Capture and leave the battle paused on mobile.
 function isActiveTapePointer(p){return Boolean(p&&p.pointerId!==undefined&&!p.finished&&['press','drag','settling'].includes(p.phase));}
 function clearAllTapeGhosts(){const ghosts=document.querySelectorAll?.('.tape-ghost');if(ghosts?.forEach)ghosts.forEach(ghost=>ghost.remove?.());else{const ghost=document.querySelector?.('.tape-ghost');if(ghost?.remove)ghost.remove();}}
-function detachTapePointerListeners(p){if(!p?.button||!p.listeners)return;const {move,up,cancel}=p.listeners;p.button.removeEventListener?.('pointermove',move);p.button.removeEventListener?.('pointerup',up);p.button.removeEventListener?.('pointercancel',cancel);p.button.removeEventListener?.('lostpointercapture',cancel);document.removeEventListener?.('pointerup',up,true);document.removeEventListener?.('pointercancel',cancel,true);}
+function detachTapePointerListeners(p){
+  if(!p?.button||!p.listeners)return;
+  const {move,up,cancel}=p.listeners;
+  p.button.removeEventListener?.('pointermove',move);
+  p.button.removeEventListener?.('pointerup',up);
+  p.button.removeEventListener?.('pointercancel',cancel);
+  p.button.removeEventListener?.('lostpointercapture',cancel);
+  document.removeEventListener?.('pointermove',move,true);
+  document.removeEventListener?.('pointerup',up,true);
+  document.removeEventListener?.('pointercancel',cancel,true);
+  p.listeners=null;
+}
+function clearTapeInteractionResources(interaction){
+  clearTimeout(interaction?.holdTimer);
+  clearTimeout(interaction?.settleTimer);
+  clearTimeout(interaction?.businessTimer);
+  detachTapePointerListeners(interaction);
+  interaction?.button?.classList?.remove('dragging');
+  interaction?.ghost?.remove?.();
+  if(interaction)interaction.ghost=null;
+  try{interaction?.button?.releasePointerCapture?.(interaction.pointerId);}catch(_){}
+}
 function makeTapeBusinessInteraction(tape,stage,wasRunning=state?.running){return {tape,stage,phase:'business',wasRunning:Boolean(wasRunning),sessionRef:state,interactionId:++tapeInteractionSerial,finished:false};}
 function finishTapeInteraction(expected=state?.tapeInteraction,{resume=true,render=true}={}){
   if(!expected||expected.finished)return false;
   const session=expected.sessionRef||state;
-  if(!session||state!==session){expected.finished=true;clearTimeout(expected.holdTimer);clearTimeout(expected.settleTimer);detachTapePointerListeners(expected);expected.button?.classList?.remove('dragging');expected.ghost?.remove?.();return false;}
-  const owns=session.tapeInteraction===expected;
+  const currentSession=Boolean(session&&state===session);
+  const ownsSession=Boolean(session&&session.tapeInteraction===expected&&session.tapeInteraction.interactionId===expected.interactionId);
   expected.finished=true;expected.phase='finished';
-  if(owns)session.tapeInteraction=null;
-  clearTimeout(expected.holdTimer);clearTimeout(expected.settleTimer);detachTapePointerListeners(expected);expected.button?.classList?.remove('dragging');expected.ghost?.remove?.();
-  if(owns){clearTapeTargetMarks();clearAllTapeGhosts();}
-  try{expected.button?.releasePointerCapture?.(expected.pointerId);}catch(_){}
-  if(owns&&resume&&!session.ended&&!session.modalKind&&!session.ultimateAimInteraction)session.running=Boolean(expected.wasRunning);
-  if(owns&&render)renderTapeTray();
-  return owns;
+  if(ownsSession)session.tapeInteraction=null;
+  clearTapeInteractionResources(expected);
+  if(currentSession&&ownsSession){clearTapeTargetMarks();clearAllTapeGhosts();}
+  if(currentSession&&ownsSession&&resume&&!session.ended&&!session.modalKind&&!session.ultimateAimInteraction)session.running=Boolean(expected.wasRunning);
+  if(currentSession&&ownsSession&&render)renderTapeTray();
+  return currentSession&&ownsSession;
 }
 function resumeAfterTapeInteraction(expected=state?.tapeInteraction,wasRunning=expected?.wasRunning??state?.running){
   if(!state)return false;
   if(expected)return finishTapeInteraction(expected,{resume:true,render:true});
   clearTapeTargetMarks();clearAllTapeGhosts();if(!state.modalKind&&!state.ended&&!state.ultimateAimInteraction)state.running=Boolean(wasRunning);renderTapeTray();return true;
 }
-function scheduleTapeFinish(p,delay=180){if(!p||p.finished||(!isActiveTapePointer(p)&&p.stage!=='selected'))return false;clearTimeout(p.holdTimer);clearTimeout(p.settleTimer);if(p.pointerId!==undefined)p.phase='settling';p.settleTimer=setTimeout(()=>{if(state===p.sessionRef&&state.tapeInteraction===p&&!p.finished)finishTapeInteraction(p);},delay);return true;}
-function beginTapeBusiness(tape,stage,previous=state?.tapeInteraction){const wasRunning=previous?.wasRunning??state?.running;if(previous)finishTapeInteraction(previous,{resume:false,render:false});const interaction=makeTapeBusinessInteraction(tape,stage,wasRunning);state.tapeInteraction=interaction;return interaction;}
+function scheduleTapeFinish(p,delay=180){
+  if(!p||p.finished||(!isActiveTapePointer(p)&&p.stage!=='selected'))return false;
+  clearTimeout(p.holdTimer);clearTimeout(p.settleTimer);
+  if(p.pointerId!==undefined)p.phase='settling';
+  p.settleTimer=setTimeout(()=>finishTapeInteraction(p),delay);
+  return true;
+}
+function beginTapeBusiness(tape,stage,previous=state?.tapeInteraction,wasRunning=previous?.wasRunning??state?.running){
+  if(previous)finishTapeInteraction(previous,{resume:false,render:false});
+  const interaction=makeTapeBusinessInteraction(tape,stage,wasRunning);
+  state.tapeInteraction=interaction;
+  return interaction;
+}
 function renderTapeTray(){
   if(!state||!ui.tapeTray)return;
   const active=state.tapeInteraction;
-  if(isActiveTapePointer(active)){active.renderPending=true;return;}
+  if(isActiveTapePointer(active))return;
   ui.tapeTray.hidden=!state.tapeTray.length&&!state.tapeOverflowQueue.length&&!state.tapeFlying.length&&!state.overflowDraining;ui.tapeTray.replaceChildren();for(let i=0;i<TAPE_TRAY_CAPACITY;i++){const slot=document.createElement('div'),tape=state.tapeTray[i];slot.className='tray-slot';slot.dataset.traySlot=String(i);if(tape){const b=document.createElement('button');b.className=`tray-tape${state.tapeInteraction?.tape===tape?' selected':''}`;b.type='button';b.textContent=TAPE_CONFIG[tape.cassetteId].name;b.setAttribute('aria-label',`${TAPE_CONFIG[tape.cassetteId].name}，拖拽或点选装备`);b.addEventListener('pointerdown',e=>beginTrayPointer(e,tape,b));slot.append(b)}ui.tapeTray.append(slot)}if(state.tapeOverflowQueue.length){const n=document.createElement('span');n.className='tray-overflow';n.textContent=`待收纳 +${state.tapeOverflowQueue.length}`;ui.tapeTray.append(n)}}
 function v3ReplaceChoice(tape,hero){const interaction=beginTapeBusiness(tape,'replace');interaction.heroId=hero.id;state.running=false;state.modalKind='replace';ui.modal.classList.remove('hidden');ui.choices.classList.remove('portrait-choices','finish-actions');ui.kicker.textContent='满槽替换';ui.title.textContent='选择要替换的卡带';ui.desc.textContent='新卡仍保留在暂存栏，选择后还需确认。';ui.choices.replaceChildren();hero.tapes.forEach((old,index)=>{const b=document.createElement('button');b.className='choice';b.type='button';b.textContent=`槽位 ${index+1}：${TAPE_CONFIG[old.cassetteId].name}${old.fusionCount>=4?'（橙色）':''}`;b.onclick=()=>v3ConfirmReplace(tape,hero,index);ui.choices.append(b)});const cancel=document.createElement('button');cancel.className='choice';cancel.type='button';cancel.textContent='取消，保留新卡';cancel.onclick=()=>{const wasRunning=state.tapeInteraction?.wasRunning;finishTapeInteraction(state.tapeInteraction,{resume:false,render:false});ui.modal.classList.add('hidden');state.modalKind=null;state.tapeInteraction=makeTapeBusinessInteraction(tape,'selected',wasRunning);state.running=false;markTapeTargets(tape);renderTapeTray();};ui.choices.append(cancel);}
 function v3ConfirmReplace(tape,hero,slot){const old=hero.tapes[slot];if(state.tapeInteraction?.tape===tape)state.tapeInteraction.stage='replaceConfirm';state.modalKind='replaceConfirm';ui.kicker.textContent='永久替换确认';ui.title.textContent='确认替换此槽位？';ui.desc.textContent=old.fusionCount>=4?'替换橙色神器/魔器将永久失去额外词条与所有同调进度。':'被替换卡及其全部同调进度将永久销毁。';ui.choices.replaceChildren();const yes=document.createElement('button'),discard=document.createElement('button'),cancel=document.createElement('button');[yes,discard,cancel].forEach(b=>{b.className='choice';b.type='button'});yes.textContent='确认替换';discard.textContent='丢弃新卡';cancel.textContent='取消';yes.onclick=()=>{if(!removeTrayTape(tape))return;if(state.tapeTarget?.heroId===hero.id&&state.tapeTarget.cassetteId===old.cassetteId)state.tapeTarget=null;tape.boundHeroId=hero.id;hero.tapes.splice(slot,1,tape);rebuildHeroMods(hero);state.pendingTape=null;state.modalKind=null;ui.modal.classList.add('hidden');resumeAfterTapeInteraction();};discard.onclick=()=>{removeTrayTape(tape);state.pendingTape=null;state.modalKind=null;ui.modal.classList.add('hidden');resumeAfterTapeInteraction();};cancel.onclick=()=>v3ReplaceChoice(tape,hero);ui.choices.append(yes,discard,cancel);}
-function submitTrayTape(tape,hero){if(!legalTapeTarget(tape,hero)){showBattleFeedback('无法装备给该梦灵');return false}if(!state.tapeTray.includes(tape))return false;const source=state.tapeInteraction,wasRunning=source?.wasRunning??state.running;const same=hero.tapes.find(x=>isFormalTape(x)&&x.cassetteId===tape.cassetteId&&x.boundHeroId===hero.id&&x.fusionCount<4);if(same){finishTapeInteraction(source,{resume:false,render:false});tape.boundHeroId=hero.id;removeTrayTape(tape);absorbTape(hero,same);return true}if(hero.tapes.length<3){finishTapeInteraction(source,{resume:false,render:false});tape.boundHeroId=hero.id;removeTrayTape(tape);hero.tapes.push(tape);rebuildHeroMods(hero);resumeAfterTapeInteraction(null,wasRunning);return true}v3ReplaceChoice(tape,hero);return true}
+function submitTrayTape(tape,hero){if(!legalTapeTarget(tape,hero)){showBattleFeedback('无法装备给该梦灵');return false}if(!state.tapeTray.includes(tape))return false;const source=state.tapeInteraction,wasRunning=source?.wasRunning??state.running;const same=hero.tapes.find(x=>isFormalTape(x)&&x.cassetteId===tape.cassetteId&&x.boundHeroId===hero.id&&x.fusionCount<4);if(same){finishTapeInteraction(source,{resume:false,render:false});tape.boundHeroId=hero.id;removeTrayTape(tape);absorbTape(hero,same,wasRunning);return true}if(hero.tapes.length<3){finishTapeInteraction(source,{resume:false,render:false});tape.boundHeroId=hero.id;removeTrayTape(tape);hero.tapes.push(tape);rebuildHeroMods(hero);resumeAfterTapeInteraction(null,wasRunning);return true}v3ReplaceChoice(tape,hero);return true}
 function openTrayDetail(tape,source=state?.tapeInteraction){const interaction=beginTapeBusiness(tape,'detail',source);state.running=false;state.modalKind='trayDetail';ui.modal.classList.remove('hidden');ui.kicker.textContent='暂存卡带';ui.title.textContent=TAPE_CONFIG[tape.cassetteId].name;ui.desc.textContent=`${tape.text}｜${tape.hero?'专属：仅对应梦灵':'通用：投放成功后绑定英雄'}｜拖拽或短按后点选英雄装备。`;ui.choices.replaceChildren();const close=document.createElement('button');close.className='choice';close.type='button';close.textContent='关闭';close.onclick=()=>{state.modalKind=null;ui.modal.classList.add('hidden');resumeAfterTapeInteraction(interaction);};ui.choices.append(close);}
 function beginTrayPointer(e,tape,button){
-  if(!state||state.ended||state.ultimateAimInteraction||state.tapeInteraction||(e.isPrimary===false)||(e.button!==undefined&&e.button!==0))return;
+  if(!state||state.ended||state.modalKind||state.ultimateAimInteraction||state.tapeInteraction||!state.tapeTray.includes(tape)||(e.isPrimary===false)||(e.button!==undefined&&e.button!==0))return;
   e.preventDefault();const p={tape,button,pointerId:e.pointerId,x:e.clientX,y:e.clientY,drag:false,stage:'press',phase:'press',holdTimer:null,settleTimer:null,sessionRef:state,interactionId:++tapeInteractionSerial,wasRunning:state.running,finished:false,listeners:null};state.tapeInteraction=p;
-  const move=ev=>{if(state!==p.sessionRef||state.tapeInteraction!==p||p.finished||ev.pointerId!==p.pointerId)return;const dx=ev.clientX-p.x,dy=ev.clientY-p.y;if(!p.drag&&Math.hypot(dx,dy)>=8){clearTimeout(p.holdTimer);p.drag=true;p.stage='drag';p.phase='drag';state.running=false;button.classList.add('dragging');const g=document.createElement('div');g.className='tape-ghost';document.body.append(g);p.ghost=g;markTapeTargets(tape)}if(p.drag&&p.ghost){p.ghost.style.left=ev.clientX+'px';p.ghost.style.top=ev.clientY+'px'}};
-  const cancel=ev=>{if(ev?.pointerId!==undefined&&ev.pointerId!==p.pointerId)return;if(state!==p.sessionRef||state.tapeInteraction!==p||p.finished)return;if(p.drag||p.phase==='settling')scheduleTapeFinish(p);else finishTapeInteraction(p);};
-  const up=ev=>{if(ev?.pointerId!==p.pointerId||state!==p.sessionRef||state.tapeInteraction!==p||p.finished)return;clearTimeout(p.holdTimer);if(!p.drag){const wasRunning=p.wasRunning;finishTapeInteraction(p,{resume:false,render:false});state.tapeInteraction=makeTapeBusinessInteraction(tape,'selected',wasRunning);state.running=false;markTapeTargets(tape);renderTapeTray();return}const rect=canvas.getBoundingClientRect(),x=(ev.clientX-rect.left)*390/rect.width,y=(ev.clientY-rect.top)*844/rect.height,hero=y>=684&&y<=770?state.heroes.find((_,i)=>Math.abs(x-(55+i*70))<=32):null;if(hero){if(!submitTrayTape(tape,hero))scheduleTapeFinish(p);}else scheduleTapeFinish(p);};
-  p.listeners={move,up,cancel};button.addEventListener('pointermove',move);button.addEventListener('pointerup',up,{once:true});button.addEventListener('pointercancel',cancel,{once:true});button.addEventListener('lostpointercapture',cancel,{once:true});document.addEventListener?.('pointerup',up,true);document.addEventListener?.('pointercancel',cancel,true);try{button.setPointerCapture?.(e.pointerId);}catch(_){}
-  p.holdTimer=setTimeout(()=>{if(state===p.sessionRef&&state.tapeInteraction===p&&!p.finished&&p.phase==='press')openTrayDetail(tape,p)},350);
+  const cleanIfStale=()=>{if(p.finished)return true;if(state===p.sessionRef&&state.tapeInteraction===p)return false;finishTapeInteraction(p,{resume:false,render:false});return true;};
+  const move=ev=>{if(ev.pointerId!==p.pointerId||cleanIfStale())return;ev.preventDefault?.();const dx=ev.clientX-p.x,dy=ev.clientY-p.y;if(!p.drag&&Math.hypot(dx,dy)>=8){clearTimeout(p.holdTimer);p.drag=true;p.stage='drag';p.phase='drag';state.running=false;button.classList.add('dragging');const g=document.createElement('div');g.className='tape-ghost';document.body.append(g);p.ghost=g;markTapeTargets(tape)}if(p.drag&&p.ghost){p.ghost.style.left=ev.clientX+'px';p.ghost.style.top=ev.clientY+'px'}};
+  const cancel=ev=>{if(ev?.pointerId!==undefined&&ev.pointerId!==p.pointerId)return;if(cleanIfStale())return;if(p.drag||p.phase==='settling')scheduleTapeFinish(p);else finishTapeInteraction(p);};
+  const up=ev=>{if(ev?.pointerId!==p.pointerId||cleanIfStale())return;clearTimeout(p.holdTimer);if(!p.drag){const wasRunning=p.wasRunning;finishTapeInteraction(p,{resume:false,render:false});state.tapeInteraction=makeTapeBusinessInteraction(tape,'selected',wasRunning);state.running=false;markTapeTargets(tape);renderTapeTray();return}const point=canvasPointFromEvent(ev),hero=point.y>=684&&point.y<=770?state.heroes.find((_,i)=>Math.abs(point.x-(55+i*70))<=32):null;if(hero){if(!submitTrayTape(tape,hero))scheduleTapeFinish(p);}else scheduleTapeFinish(p);};
+  p.listeners={move,up,cancel};button.addEventListener('pointermove',move);button.addEventListener('pointerup',up,{once:true});button.addEventListener('pointercancel',cancel,{once:true});button.addEventListener('lostpointercapture',cancel,{once:true});document.addEventListener?.('pointermove',move,{capture:true,passive:false});document.addEventListener?.('pointerup',up,true);document.addEventListener?.('pointercancel',cancel,true);try{button.setPointerCapture?.(e.pointerId);}catch(_){}
+  p.holdTimer=setTimeout(()=>{if(p.finished)return;if(cleanIfStale())return;if(p.phase==='press')openTrayDetail(tape,p)},350);
 }
 function nextTraySlot(){const reserved=new Set(state.tapeFlying.map(f=>f.targetSlot));if(state.overflowDraining)reserved.add(state.overflowDraining.targetSlot);for(let i=0;i<TAPE_TRAY_CAPACITY;i++)if(i>=state.tapeTray.length&&!reserved.has(i))return i;return -1;}
 function pickGroundTape(){if(!state?.tapeDrop||state.ended)return false;const slot=nextTraySlot();if(slot<0){showBattleFeedback('暂存栏已满');return false}const tape=state.tapeDrop;state.tapeDrop=null;state.tapeFlying.push({tape,x:tape.x,y:tape.y,time:.4,targetSlot:slot});renderTapeTray();return true;}
@@ -425,10 +457,21 @@ function confirmOrangeReplace(tape,heroId,slot){const hero=state.heroes.find(h=>
 function closeTapePanel() { state.pendingTape=null; state.modalKind=null; ui.modal.classList.add('hidden'); if (state.pendingVictory) return win(); trySpawnTape(); if (state.spawnQueue.length||state.enemies.length||state.shots.length) state.running=true; updateUi(); }
 function tapeEffectPreview(tape,level){const data=TAPE_LEVELS[tape.cassetteId]||{},v=key=>data[key]?.[level-1];if(tape.cassetteId==='monk_wood')return `普通木鱼 +${Math.round(v('damage')*100)}%`;if(tape.cassetteId==='monk_echo')return `经文伤害 +${v('monkVerseDamage')}`;if(tape.cassetteId==='monk_bell')return `超级路径 +${v('monkPathDamage')}，禁锢半径 +${v('monkBindRadius')}px`;if(tape.cassetteId==='guanyu_engine')return `普通车伤害 +${Math.round(v('damage')*100)}%`;if(tape.cassetteId==='guanyu_battery')return `有效普通车回能 +${v('energy')}`;if(tape.cassetteId==='guanyu_cargo')return `巨车碰撞基础伤害 +${v('guanyuGiantDamage')}`;return TAPE_CONFIG[tape.cassetteId].text;}
 function openTapeDetail(hero,tape){state.running=false;state.modalKind='tapeDetail';ui.modal.classList.remove('hidden');ui.choices.classList.remove('portrait-choices','finish-actions');const grade=tapeGrade(tape),level=grade==='blue'?1:grade==='purple'?2:3,next=grade==='blue'?'紫Ⅱ':grade==='purple'?'橙Ⅲ':'已达橙Ⅲ',affixText={glow_finale:'耀光尾奏：大招直接值+15%',star_conduit:'星辉传导：有效普攻回能+1',oathwall:'守誓护壁：大招+8墙盾',triumph:'凯旋残响：下次普攻+10能量',frenzy:'狂焰协议：伤害+28%，回能-1',black_battery:'黑潮电池：回能×1.35，伤害-15%',distortion:'失真演出：大招+35%，攻速减缓',night_overclock:'夜幕超频：间隔-20%，大招-15%'};ui.kicker.textContent=`${grade==='orange'?'橙Ⅲ':grade==='purple'?'紫Ⅱ':'蓝Ⅰ'} · ${hero.id}`;ui.title.textContent=TAPE_CONFIG[tape.cassetteId].name;ui.desc.textContent=`绑定：${GAME_CONFIG.heroes[hero.id].name}｜当前 ${grade}：${tapeEffectPreview(tape,level)}｜${tape.fusionCount===3?'素材1/2':`同调 ${tape.fusionCount}/4`}｜下阶：${next}${level<3?`：${tapeEffectPreview(tape,level+1)}`:''}${tape.alignment?`｜${tape.alignment==='artifact'?'神':'魔'}：${affixText[tape.affixId]||tape.affixId}`:''}`;ui.choices.replaceChildren();if(grade!=='orange'){const b=document.createElement('button');b.className='choice';b.type='button';b.textContent=state.tapeTarget?.heroId===hero.id&&state.tapeTarget?.cassetteId===tape.cassetteId?'取消同调目标':'设为同调目标';b.onclick=()=>{if(state.tapeTarget?.heroId===hero.id&&state.tapeTarget?.cassetteId===tape.cassetteId)state.tapeTarget=null;else state.tapeTarget={heroId:hero.id,cassetteId:tape.cassetteId};openTapeDetail(hero,tape)};ui.choices.append(b)}const c=document.createElement('button');c.className='choice';c.type='button';c.textContent='关闭';c.onclick=()=>{state.modalKind=null;ui.modal.classList.add('hidden');if(state.enemies.length||state.spawnQueue.length)state.running=true};ui.choices.append(c)}
-function absorbTape(hero,equipped){
-  const fusionSession=state;fusionSession.running=false;fusionSession.modalKind='fusion';equipped.fusionCount++;
+function absorbTape(hero,equipped,wasRunning=state?.tapeInteraction?.wasRunning??state?.running){
+  const fusionSession=state;
+  const interaction=beginTapeBusiness(equipped,'fusion',fusionSession.tapeInteraction,wasRunning);
+  fusionSession.running=false;fusionSession.modalKind='fusion';equipped.fusionCount++;
   if(equipped.fusionCount>=4){equipped.fusionCount=4;if(fusionSession.tapeTarget?.cassetteId===equipped.cassetteId&&fusionSession.tapeTarget.heroId===hero.id)fusionSession.tapeTarget=null;if(!equipped.alignment){equipped.alignment=Math.random()<.5?'artifact':'cursed';rebuildHeroMods(hero);equipped.affixId=chooseAffix(hero,equipped.alignment);if(equipped.affixId)hero.affixes.push(equipped.affixId);}showBattleFeedback(`终极同调 · ${equipped.alignment==='artifact'?'神':'魔'} · ${equipped.affixId||'无额外词条'}`);}else showBattleFeedback(equipped.fusionCount===2?'蓝→紫 同调完成':'素材 1/2 吸收');
-  rebuildHeroMods(hero);setTimeout(()=>{if(state!==fusionSession||fusionSession.ended||fusionSession.modalKind!=='fusion')return;fusionSession.modalKind=null;clearTapeTargetMarks();fusionSession.tapeInteraction=null;renderTapeTray();trySpawnTape();if(fusionSession.enemies.length||fusionSession.spawnQueue.length)fusionSession.running=true;},equipped.fusionCount===4?1200:800);
+  rebuildHeroMods(hero);
+  interaction.businessTimer=setTimeout(()=>{
+    if(state!==fusionSession||fusionSession.tapeInteraction!==interaction||interaction.finished||fusionSession.ended||fusionSession.modalKind!=='fusion'){
+      finishTapeInteraction(interaction,{resume:false,render:false});
+      return;
+    }
+    fusionSession.modalKind=null;
+    finishTapeInteraction(interaction,{resume:true,render:true});
+    trySpawnTape();
+  },equipped.fusionCount===4?1200:800);
 }
 function xpNeed() { return Math.round(GAME_CONFIG.xp.baseNeed * Math.pow(GAME_CONFIG.xp.growth, state.level - 1)); }
 function showChoices(kind) {
