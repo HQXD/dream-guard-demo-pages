@@ -10,11 +10,11 @@ const GAME_CONFIG = {
     kite: { name: '风筝', icon: '🪁', color: '#70d489', damage: 8, interval: .65, energyGain: 3, trait: '穿透', description: '8伤害 / 0.65秒；穿透2', pierce: 2, ultimate: '千刃风暴' },
     rock: { name: '岩卫', icon: '🛡️', color: '#d4a45d', damage: 15, interval: 1, energyGain: 5, trait: '击退', description: '15伤害 / 1秒；击退敌人', knockback: 38, ultimate: '城垣苏醒' },
     star: { name: '星瞳', icon: '✦', color: '#b78bf5', damage: 18, interval: 1.1, energyGain: 5, trait: '小范围', description: '18伤害 / 1.1秒；小范围溅射', splash: 42, ultimate: '星群审判' },
-    laser: { name: '镭射眼', icon: '◉', color: '#64e9f1', damage: 10, interval: .5, energyGain: 3, range: 680, trait: '持续链接', description: '10伤害 / 0.5秒；持续激光锁敌', ultimate: '镭爆时间' },
-    princess: { name: '东方公主', icon: '◇', color: '#f0ac61', damage: 12, interval: .7, energyGain: 4, range: 640, trait: '飞针穿透', description: '12伤害 / 0.7秒；飞针穿透并插地', ultimate: '穿针引线' },
-    arthur: { name: '亚瑟', icon: '◐', color: '#b9d9f2', damage: 16, interval: .85, energyGain: 4, range: 320, trait: '刀气护盾', description: '16伤害 / 0.85秒；弯月刀气与诱敌盾', ultimate: '圣盾号令' },
-    guanyu: { name: '关羽', icon: '▣', color: '#ee7356', damage: 22, interval: .9, energyGain: 4, range: 680, trait: '外卖车队', description: '22伤害 / 0.9秒；上行外卖车冲阵', ultimate: '巨轮车队' },
-    monk: { name: '唐小僧', icon: '◉', color: '#d8b466', damage: 14, interval: 1.15, energyGain: 5, range: 560, trait: '木鱼经文', description: '14伤害 / 1.15秒；眩晕木鱼与飞行经文', ultimate: '超级木鱼' }
+    laser: { name: '镭射眼', icon: '◉', color: '#64e9f1', profession: 'mage', professionLabel: '法师', damage: 10, interval: .5, energyGain: 3, range: 680, trait: '持续链接', description: '10伤害 / 0.5秒；持续激光锁敌', ultimate: '镭爆时间' },
+    princess: { name: '东方公主', icon: '◇', color: '#f0ac61', profession: 'marksman', professionLabel: '射手', damage: 12, interval: .7, energyGain: 4, range: 640, trait: '飞针穿透', description: '12伤害 / 0.7秒；飞针穿透并插地', ultimate: '穿针引线' },
+    arthur: { name: '亚瑟', icon: '◐', color: '#b9d9f2', profession: 'support', professionLabel: '辅助（暂定）', damage: 16, interval: .85, energyGain: 4, range: 320, trait: '刀气护盾', description: '16伤害 / 0.85秒；弯月刀气与诱敌盾', ultimate: '圣盾号令' },
+    guanyu: { name: '关羽', icon: '▣', color: '#ee7356', profession: 'warrior', professionLabel: '战士', damage: 22, interval: .9, energyGain: 4, range: 680, trait: '外卖车队', description: '22伤害 / 0.9秒；上行外卖车冲阵', ultimate: '巨轮车队' },
+    monk: { name: '唐小僧', icon: '◉', color: '#d8b466', profession: 'control', professionLabel: '控制', damage: 14, interval: 1.15, energyGain: 5, range: 560, trait: '木鱼经文', description: '14伤害 / 1.15秒；眩晕木鱼与飞行经文', ultimate: '超级木鱼' }
   },
   enemies: {
     imp: { name: '小鬼', color: '#d66676', hp: 26, speed: 23, attack: 4, attackInterval: 1.35, xp: 7, radius: 12 },
@@ -67,6 +67,24 @@ const GAME_CONFIG = {
     monkField:{name:'佛场余响',icon:'monk',color:'#f0a45c',tag:'唐小僧进阶',description:'超级路径 +20%、禁锢半径 +18（最多2层）',hero:'monk',apply:s=>{const h=s.heroes.find(x=>x.id==='monk');if(h)h.monkFieldStacks=Math.min(2,(h.monkFieldStacks||0)+1)}}
   }
 };
+
+// 正式梦灵唯一入口。历史梦灵资料可保留以供溯源，但不得经过招募、战斗、词条或卡带流程。
+const FORMAL_HERO_IDS = Object.freeze(['laser', 'princess', 'arthur', 'guanyu', 'monk']);
+const FORMAL_HERO_ID_SET = new Set(FORMAL_HERO_IDS);
+function isFormalHeroId(id) { return FORMAL_HERO_ID_SET.has(id); }
+function availableFormalHeroIds() {
+  return FORMAL_HERO_IDS.filter(id => !state?.heroes?.some(hero => hero.id === id));
+}
+function isFormalTape(tape) {
+  return Boolean(tape) && (!tape.hero || isFormalHeroId(tape.hero)) && (!tape.boundHeroId || isFormalHeroId(tape.boundHeroId));
+}
+function heroBenefitsFromPierce(hero) {
+  if (!hero) return false;
+  if (hero.id === 'princess') return state.global.pierce < 3;
+  if (hero.id === 'guanyu') return (hero.guanyuCargoStacks || 0) + state.global.pierce < 2;
+  if (hero.id === 'monk') return state.global.pierce < 2;
+  return false;
+}
 
 const TAPE_CONFIG = {
   ember_heat: { name:'灼热增幅', rarity:'common', hero:'ember', text:'普攻伤害 +18%', apply:m=>m.damage+=.18 }, ember_loop:{name:'引燃回路',rarity:'rare',hero:'ember',text:'有效普攻回能 +1',apply:m=>m.energy=Math.min(2,m.energy+1)}, ember_master:{name:'焚城母带',rarity:'epic',hero:'ember',text:'大招范围 +35，灼烧 +1秒',apply:m=>{m.emberRadius+=35;m.emberBurn+=1}},
@@ -145,8 +163,8 @@ function syncUltimateButtons() {
   state.heroes.forEach((hero, index) => {
     const spec = GAME_CONFIG.heroes[hero.id], button = document.createElement('button'), ready = hero.energy >= hero.energyMax;
     button.type = 'button'; button.className = `ultimate-button${ready ? ' ready' : ''}`;
-    button.style.gridColumn = String(index + 1); button.setAttribute('aria-label', `${spec.name}${spec.ultimate}，能量 ${Math.floor(hero.energy)}/100`);
-    button.textContent = ready ? `可释放\n${spec.ultimate}` : `大招\n${Math.floor(hero.energy)}/100`;
+    button.style.gridColumn = String(index + 1); button.setAttribute('aria-label', `${spec.name}·${spec.professionLabel}·${spec.ultimate}，能量 ${Math.floor(hero.energy)}/100`);
+    button.textContent = ready ? `${spec.professionLabel}\n可释放` : `${spec.professionLabel}\n${Math.floor(hero.energy)}/100`;
     button.addEventListener('click', event => {
       const tape = state.tapeInteraction?.tape;
       if (tape && state.tapeInteraction.stage === 'selected') { if(!submitTrayTape(tape, hero)) setTimeout(finishTapeInteraction,180); }
@@ -206,8 +224,8 @@ function newState() {
 function sample(arr, count) { const pool = [...arr], out = []; while (pool.length && out.length < count) out.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]); return out; }
 function defaultMods() { return { damage:0, energy:0, slow:0, emberDamage:0, emberBurn:0, freeze:0, bossFreeze:0, kiteBlades:0, rockHeal:0, rockShield:0,rockKnock:0, starRadius:0, starExtra:0, starExtraPower:0, laserRange:0, laserUltDamage:0, laserUltRadius:0, princessReturnDamage:0, princessReturnWidth:0, arthurShieldHp:0, arthurShieldTime:0, guanyuGiantDamage:0, monkVerseDamage:0,monkPathDamage:0,monkBindRadius:0, ultPower:0, interval:1, energyFlat:0, energyMult:1, wallShieldOnUlt:0, triumph:false, distortion:false }; }
 function tapeGrade(tape){return tape.fusionCount>=4?'orange':tape.fusionCount>=2?'purple':'blue'}
-function targetTape(){const t=state.tapeTarget;return t&&state.heroes.find(h=>h.id===t.heroId)?.tapes.find(x=>x.cassetteId===t.cassetteId&&x.boundHeroId===t.heroId&&x.fusionCount<4)}
-function newTapePool(){return Object.entries(TAPE_CONFIG).filter(([id,t])=>{if(t.hero&&!state.heroes.some(h=>h.id===t.hero))return false;return !state.heroes.some(h=>h.tapes.some(x=>x.cassetteId===id));})}
+function targetTape(){const t=state.tapeTarget;return t&&isFormalHeroId(t.heroId)&&state.heroes.find(h=>h.id===t.heroId)?.tapes.find(x=>isFormalTape(x)&&x.cassetteId===t.cassetteId&&x.boundHeroId===t.heroId&&x.fusionCount<4)}
+function newTapePool(){const heroes=state.heroes.filter(hero=>isFormalHeroId(hero.id));if(!heroes.length)return [];return Object.entries(TAPE_CONFIG).filter(([id,t])=>{if(!isFormalTape({hero:t.hero,boundHeroId:t.hero||null}))return false;if(t.hero&&!heroes.some(h=>h.id===t.hero))return false;return !heroes.some(h=>h.tapes.some(x=>x.cassetteId===id));})}
 function createTape(id,boundHeroId){return {id,cassetteId:id,boundHeroId:boundHeroId||null,fusionCount:1,alignment:null,affixId:null,...TAPE_CONFIG[id]}}
 function rollTape(){const target=targetTape(),wave=state.wave;if(target&&((wave>=4)||Math.random()<.65))return createTape(target.cassetteId,target.boundHeroId);const pool=newTapePool();if(!pool.length)return null;const [id,tape]=pool[Math.floor(Math.random()*pool.length)];return createTape(id,tape.hero||null)}
 const TAPE_TRAY_CAPACITY=7;
@@ -218,11 +236,11 @@ function markTapeTargets(tape){if(!ui.ultimateControls)return;[...ui.ultimateCon
 function renderTapeTray(){if(!state||!ui.tapeTray)return;ui.tapeTray.hidden=!state.tapeTray.length&&!state.tapeOverflowQueue.length&&!state.tapeFlying.length&&!state.overflowDraining;ui.tapeTray.replaceChildren();for(let i=0;i<TAPE_TRAY_CAPACITY;i++){const slot=document.createElement('div'),tape=state.tapeTray[i];slot.className='tray-slot';slot.dataset.traySlot=String(i);if(tape){const b=document.createElement('button');b.className=`tray-tape${state.tapeInteraction?.tape===tape?' selected':''}`;b.type='button';b.textContent=TAPE_CONFIG[tape.cassetteId].name;b.setAttribute('aria-label',`${TAPE_CONFIG[tape.cassetteId].name}，拖拽或点选装备`);b.addEventListener('pointerdown',e=>beginTrayPointer(e,tape,b));slot.append(b)}ui.tapeTray.append(slot)}if(state.tapeOverflowQueue.length){const n=document.createElement('span');n.className='tray-overflow';n.textContent=`待收纳 +${state.tapeOverflowQueue.length}`;ui.tapeTray.append(n)}}
 function resumeAfterTapeInteraction(){clearTapeTargetMarks();state.tapeInteraction=null;const ghost=document.querySelector('.tape-ghost');if(ghost?.remove)ghost.remove();if(!state.modalKind&&!state.ended)state.running=true;renderTapeTray();}
 function finishTapeInteraction(){if(!state)return;const p=state.tapeInteraction;p?.button?.releasePointerCapture?.(p.pointerId);if(p?.holdTimer)clearTimeout(p.holdTimer);resumeAfterTapeInteraction();}
-function legalTapeTarget(tape,hero){return hero&&(!tape.hero||tape.hero===hero.id)&&(!tape.boundHeroId||tape.boundHeroId===hero.id)}
+function legalTapeTarget(tape,hero){return isFormalHeroId(hero?.id)&&isFormalTape(tape)&&(!tape.hero||tape.hero===hero.id)&&(!tape.boundHeroId||tape.boundHeroId===hero.id)}
 function removeTrayTape(tape){const index=state.tapeTray.indexOf(tape);if(index<0)return false;state.tapeTray.splice(index,1);fillTapeTray();return true;}
 function v3ReplaceChoice(tape,hero){state.running=false;state.modalKind='replace';state.tapeInteraction={tape,stage:'replace',heroId:hero.id};ui.modal.classList.remove('hidden');ui.choices.classList.remove('portrait-choices','finish-actions');ui.kicker.textContent='满槽替换';ui.title.textContent='选择要替换的卡带';ui.desc.textContent='新卡仍保留在暂存栏，选择后还需确认。';ui.choices.replaceChildren();hero.tapes.forEach((old,index)=>{const b=document.createElement('button');b.className='choice';b.type='button';b.textContent=`槽位 ${index+1}：${TAPE_CONFIG[old.cassetteId].name}${old.fusionCount>=4?'（橙色）':''}`;b.onclick=()=>v3ConfirmReplace(tape,hero,index);ui.choices.append(b)});const cancel=document.createElement('button');cancel.className='choice';cancel.type='button';cancel.textContent='取消，保留新卡';cancel.onclick=()=>{ui.modal.classList.add('hidden');state.modalKind=null;state.tapeInteraction={tape,stage:'selected'};markTapeTargets(tape);renderTapeTray();};ui.choices.append(cancel);}
 function v3ConfirmReplace(tape,hero,slot){const old=hero.tapes[slot];state.modalKind='replaceConfirm';ui.kicker.textContent='永久替换确认';ui.title.textContent='确认替换此槽位？';ui.desc.textContent=old.fusionCount>=4?'替换橙色神器/魔器将永久失去额外词条与所有同调进度。':'被替换卡及其全部同调进度将永久销毁。';ui.choices.replaceChildren();const yes=document.createElement('button'),discard=document.createElement('button'),cancel=document.createElement('button');[yes,discard,cancel].forEach(b=>{b.className='choice';b.type='button'});yes.textContent='确认替换';discard.textContent='丢弃新卡';cancel.textContent='取消';yes.onclick=()=>{if(!removeTrayTape(tape))return;if(state.tapeTarget?.heroId===hero.id&&state.tapeTarget.cassetteId===old.cassetteId)state.tapeTarget=null;tape.boundHeroId=hero.id;hero.tapes.splice(slot,1,tape);rebuildHeroMods(hero);state.pendingTape=null;state.modalKind=null;ui.modal.classList.add('hidden');resumeAfterTapeInteraction();};discard.onclick=()=>{removeTrayTape(tape);state.pendingTape=null;state.modalKind=null;ui.modal.classList.add('hidden');resumeAfterTapeInteraction();};cancel.onclick=()=>v3ReplaceChoice(tape,hero);ui.choices.append(yes,discard,cancel);}
-function submitTrayTape(tape,hero){if(!legalTapeTarget(tape,hero)){showBattleFeedback('无法装备给该梦灵');return false}if(!state.tapeTray.includes(tape))return false;const same=hero.tapes.find(x=>x.cassetteId===tape.cassetteId&&x.boundHeroId===hero.id&&x.fusionCount<4);if(same){tape.boundHeroId=hero.id;removeTrayTape(tape);absorbTape(hero,same);return true}if(hero.tapes.length<3){tape.boundHeroId=hero.id;removeTrayTape(tape);hero.tapes.push(tape);rebuildHeroMods(hero);resumeAfterTapeInteraction();return true}v3ReplaceChoice(tape,hero);return true}
+function submitTrayTape(tape,hero){if(!legalTapeTarget(tape,hero)){showBattleFeedback('无法装备给该梦灵');return false}if(!state.tapeTray.includes(tape))return false;const same=hero.tapes.find(x=>isFormalTape(x)&&x.cassetteId===tape.cassetteId&&x.boundHeroId===hero.id&&x.fusionCount<4);if(same){tape.boundHeroId=hero.id;removeTrayTape(tape);absorbTape(hero,same);return true}if(hero.tapes.length<3){tape.boundHeroId=hero.id;removeTrayTape(tape);hero.tapes.push(tape);rebuildHeroMods(hero);resumeAfterTapeInteraction();return true}v3ReplaceChoice(tape,hero);return true}
 function openTrayDetail(tape){state.running=false;state.modalKind='trayDetail';state.tapeInteraction={tape,stage:'detail'};ui.modal.classList.remove('hidden');ui.kicker.textContent='暂存卡带';ui.title.textContent=TAPE_CONFIG[tape.cassetteId].name;ui.desc.textContent=`${tape.text}｜${tape.hero?'专属：仅对应梦灵':'通用：投放成功后绑定英雄'}｜拖拽或短按后点选英雄装备。`;ui.choices.replaceChildren();const close=document.createElement('button');close.className='choice';close.type='button';close.textContent='关闭';close.onclick=()=>{state.modalKind=null;ui.modal.classList.add('hidden');resumeAfterTapeInteraction();};ui.choices.append(close);}
 function beginTrayPointer(e,tape,button){if(!state||state.ended||state.tapeInteraction?.pointerId!==undefined||e.button!==undefined&&e.button!==0)return;e.preventDefault();button.setPointerCapture?.(e.pointerId);const p={tape,button,pointerId:e.pointerId,x:e.clientX,y:e.clientY,drag:false,stage:'press',holdTimer:null};state.tapeInteraction=p;p.holdTimer=setTimeout(()=>{if(state.tapeInteraction===p&&!p.drag)openTrayDetail(tape)},350);const move=ev=>{if(state.tapeInteraction!==p||ev.pointerId!==p.pointerId)return;const dx=ev.clientX-p.x,dy=ev.clientY-p.y;if(!p.drag&&Math.hypot(dx,dy)>=8){clearTimeout(p.holdTimer);p.drag=true;p.stage='drag';state.running=false;button.classList.add('dragging');const g=document.createElement('div');g.className='tape-ghost';document.body.append(g);p.ghost=g;markTapeTargets(tape)}if(p.drag&&p.ghost){p.ghost.style.left=ev.clientX+'px';p.ghost.style.top=ev.clientY+'px'}};const cancel=ev=>{if(ev?.pointerId!==undefined&&ev.pointerId!==p.pointerId)return;button.removeEventListener('pointermove',move);if(state.tapeInteraction===p){if(p.drag)setTimeout(finishTapeInteraction,180);else finishTapeInteraction();}};const up=ev=>{if(ev.pointerId!==p.pointerId||state.tapeInteraction!==p)return;button.removeEventListener('pointermove',move);clearTimeout(p.holdTimer);if(!p.drag){state.running=false;p.stage='selected';markTapeTargets(tape);renderTapeTray();return}const rect=canvas.getBoundingClientRect(),x=(ev.clientX-rect.left)*390/rect.width,y=(ev.clientY-rect.top)*844/rect.height,hero=y>=684&&y<=770?state.heroes.find((_,i)=>Math.abs(x-(55+i*70))<=32):null;if(hero){if(!submitTrayTape(tape,hero))setTimeout(finishTapeInteraction,180);}else setTimeout(finishTapeInteraction,180);};button.addEventListener('pointermove',move);button.addEventListener('pointerup',up,{once:true});button.addEventListener('pointercancel',cancel,{once:true});button.addEventListener('lostpointercapture',cancel,{once:true});}
 function nextTraySlot(){const reserved=new Set(state.tapeFlying.map(f=>f.targetSlot));if(state.overflowDraining)reserved.add(state.overflowDraining.targetSlot);for(let i=0;i<TAPE_TRAY_CAPACITY;i++)if(i>=state.tapeTray.length&&!reserved.has(i))return i;return -1;}
@@ -241,6 +259,7 @@ function rebuildHeroMods(hero) { hero.affixes=hero.tapes.map(tape=>tape.affixId)
 function chooseAffix(hero, alignment){const artifact=['glow_finale','star_conduit','oathwall','triumph'], cursed=['frenzy','black_battery','distortion','night_overclock'];const pool=(alignment==='artifact'?artifact:cursed).filter(id=>!hero.affixes.includes(id)&&!(id==='star_conduit'&&hero.mods.energy>=3));return pool.length?pool[Math.floor(Math.random()*pool.length)]:null}
 function applyAffix(hero,id){const m=hero.mods;if(id==='glow_finale')m.ultPower+=.15;if(id==='star_conduit')m.energyFlat+=1;if(id==='oathwall')m.wallShieldOnUlt=8;if(id==='triumph')m.triumph=true;if(id==='frenzy'){m.damage+=.28;m.energyFlat-=1;}if(id==='black_battery'){m.energyMult*=1.35;m.damage-=.15;}if(id==='distortion'){m.ultPower+=.35;m.distortion=true;}if(id==='night_overclock'){m.interval*=.8;m.ultPower-=.15;}m.ultPower=Math.max(-.5,Math.min(1,m.ultPower));m.interval=Math.max(.3,m.interval)}
 function openTapePanel(tape, lost=false) {
+  if (!isFormalTape(tape)) return;
   if(state.modalKind==='level'){state.tapeQueue.push(tape);return}
   const owner=state.heroes.find(hero=>hero.id===(tape.boundHeroId||tape.hero)); const match=owner?.tapes.find(item=>item.cassetteId===tape.cassetteId&&item.boundHeroId===(tape.boundHeroId||owner.id)&&item.fusionCount<4);
   if(match){ absorbTape(owner,match); return; }
@@ -256,12 +275,12 @@ function openTapePanel(tape, lost=false) {
 }
 function tapeSkipButton() { const b=document.createElement('button'); b.className='choice'; b.type='button'; b.innerHTML='<span class="choice-icon">×</span><span><strong>跳过</strong><small>本局销毁此卡带</small></span>'; b.onclick=closeTapePanel; return b; }
 function showTapeSlots(tape, heroId) {
-  const hero=state.heroes.find(item=>item.id===heroId); ui.desc.textContent=`装备至 ${GAME_CONFIG.heroes[heroId].name} · ${tape.text}`; ui.choices.replaceChildren();
+  const hero=state.heroes.find(item=>item.id===heroId); if(!isFormalTape(tape)||!isFormalHeroId(heroId)||!hero)return;ui.desc.textContent=`装备至 ${GAME_CONFIG.heroes[heroId].name} · ${GAME_CONFIG.heroes[heroId].professionLabel} · ${tape.text}`; ui.choices.replaceChildren();
   if (hero.tapes.length < 3) { const b=document.createElement('button');b.className='choice';b.type='button';b.innerHTML='<span class="choice-icon">+</span><span><strong>装备至空槽</strong><small>剩余槽位可继续装备</small></span>';b.onclick=()=>equipTape(tape,heroId,hero.tapes.length);ui.choices.append(b); }
   else hero.tapes.forEach((item,index)=>{const old=TAPE_CONFIG[item.cassetteId],b=document.createElement('button');b.className='choice';b.type='button';b.innerHTML=`<span class="choice-icon">${index+1}</span><span><strong>替换槽位 ${index+1}</strong><small>销毁：${old.name}</small></span>`;b.onclick=()=>item.fusionCount>=4?confirmOrangeReplace(tape,heroId,index):equipTape(tape,heroId,index);ui.choices.append(b);});
   ui.choices.append(tapeSkipButton());
 }
-function equipTape(tape, heroId, slot) { const hero=state.heroes.find(item=>item.id===heroId); if (!hero || (tape.hero && tape.hero!==heroId)) return; tape.boundHeroId=heroId; if (slot < hero.tapes.length) { const removed=hero.tapes[slot]; if(state.tapeTarget?.cassetteId===removed.cassetteId&&state.tapeTarget.heroId===heroId)state.tapeTarget=null; hero.tapes.splice(slot,1,tape); } else hero.tapes.push(tape); state.tapeTarget={heroId,cassetteId:tape.cassetteId}; rebuildHeroMods(hero); closeTapePanel(); }
+function equipTape(tape, heroId, slot) { const hero=state.heroes.find(item=>item.id===heroId); if (!legalTapeTarget(tape,hero)) return; tape.boundHeroId=heroId; if (slot < hero.tapes.length) { const removed=hero.tapes[slot]; if(state.tapeTarget?.cassetteId===removed.cassetteId&&state.tapeTarget.heroId===heroId)state.tapeTarget=null; hero.tapes.splice(slot,1,tape); } else hero.tapes.push(tape); state.tapeTarget={heroId,cassetteId:tape.cassetteId}; rebuildHeroMods(hero); closeTapePanel(); }
 function confirmOrangeReplace(tape,heroId,slot){const hero=state.heroes.find(h=>h.id===heroId),old=hero.tapes[slot];ui.kicker.textContent='永久替换确认';ui.title.textContent='替换橙色卡带？';ui.desc.textContent=`替换橙色${old.alignment==='artifact'?'神器':'魔器'}将永久失去额外词条：${old.affixId}`;ui.choices.replaceChildren();const yes=document.createElement('button'),no=document.createElement('button');yes.className=no.className='choice';yes.type=no.type='button';yes.textContent='确认替换';no.textContent='取消';yes.onclick=()=>equipTape(tape,heroId,slot);no.onclick=()=>showTapeSlots(tape,heroId);ui.choices.append(yes,no)}
 function absorbTape(hero, equipped) { state.running=false; state.modalKind='fusion'; equipped.fusionCount++; if(equipped.fusionCount>=4){equipped.fusionCount=4; if(state.tapeTarget?.cassetteId===equipped.cassetteId&&state.tapeTarget.heroId===hero.id)state.tapeTarget=null; if(!equipped.alignment){equipped.alignment=Math.random()<.5?'artifact':'cursed';rebuildHeroMods(hero);equipped.affixId=chooseAffix(hero,equipped.alignment);if(equipped.affixId)hero.affixes.push(equipped.affixId);} showBattleFeedback(`终极同调 · ${equipped.alignment==='artifact'?'神':'魔'} · ${equipped.affixId||'无额外词条'}`); } else showBattleFeedback(equipped.fusionCount===2?'蓝→紫 同调完成':'素材 1/2 吸收'); rebuildHeroMods(hero); setTimeout(()=>{if(!state.ended){state.modalKind=null;clearTapeTargetMarks();state.tapeInteraction=null;renderTapeTray();trySpawnTape();if(state.enemies.length||state.spawnQueue.length)state.running=true;}},equipped.fusionCount===4?1200:800); }
 function closeTapePanel() { state.pendingTape=null; state.modalKind=null; ui.modal.classList.add('hidden'); if (state.pendingVictory) return win(); trySpawnTape(); if (state.spawnQueue.length||state.enemies.length||state.shots.length) state.running=true; updateUi(); }
@@ -272,7 +291,7 @@ function showChoices(kind) {
   state.running = false; state.modalKind = kind; ui.modal.classList.remove('hidden');
   ui.choices.classList.remove('finish-actions');
   ui.choices.classList.add('portrait-choices');
-  const baseIds = Object.keys(GAME_CONFIG.heroes).filter(id => !state.heroes.some(h => h.id === id));
+  const baseIds = availableFormalHeroIds();
   let options = [];
   if (kind === 'hero') { options = sample(baseIds, 3).map(id => ({ type: 'hero', id })); ui.kicker.textContent = '梦境正在裂开'; ui.title.textContent = state.heroes.length ? '招募新的护卫' : '选择首位护卫'; ui.desc.textContent = '护卫固定驻守城墙，自动攻击最接近城墙的敌人。'; }
   else {
@@ -282,7 +301,7 @@ function showChoices(kind) {
     const guanyu = state.heroes.find(h => h.id === 'guanyu');
     const monk = state.heroes.find(h => h.id === 'monk');
     const canUse = id => {
-      if (id === 'pierce') return state.heroes.some(h => GAME_CONFIG.heroes[h.id].pierce) || Boolean(princess && state.global.pierce < 3) || Boolean(guanyu && (guanyu.guanyuCargoStacks||0)+state.global.pierce<2);
+      if (id === 'pierce') return state.heroes.some(heroBenefitsFromPierce);
       if (id === 'laserLens') return laser && (laser.laserLensStacks || 0) < 3;
       if (id === 'laserScan') return laser && (laser.laserScanStacks || 0) < 3;
       if (id === 'laserLock') return laser && !laser.laserLock;
@@ -303,7 +322,7 @@ function showChoices(kind) {
       const upgrade = GAME_CONFIG.upgrades[id];
       return !upgrade.hero || !state.evolutions.has(id);
     };
-    const heroUpgrades = Object.keys(GAME_CONFIG.upgrades).filter(id => GAME_CONFIG.upgrades[id].hero && state.heroes.some(h => h.id === GAME_CONFIG.upgrades[id].hero) && canUse(id));
+    const heroUpgrades = Object.keys(GAME_CONFIG.upgrades).filter(id => isFormalHeroId(GAME_CONFIG.upgrades[id].hero) && state.heroes.some(h => h.id === GAME_CONFIG.upgrades[id].hero) && canUse(id));
     const generic = Object.keys(GAME_CONFIG.upgrades).filter(id => !GAME_CONFIG.upgrades[id].hero && canUse(id));
     const candidates = state.heroes.length < 3 ? [...baseIds.map(id => 'hero:' + id), ...heroUpgrades.map(id => 'upgrade:' + id), ...generic.map(id => 'upgrade:' + id)] : [...heroUpgrades.map(id => 'upgrade:' + id), ...generic.map(id => 'upgrade:' + id)];
     options = sample(candidates, 3).map(key => { const [type, id] = key.split(':'); return { type, id }; });
@@ -315,7 +334,7 @@ function showChoices(kind) {
 }
 function makeChoice(option) {
   const data = option.type === 'hero' ? GAME_CONFIG.heroes[option.id] : GAME_CONFIG.upgrades[option.id];
-  let description=data.description;
+  let description=option.type === 'hero' ? `职业：${data.professionLabel} · ${data.description}` : data.description;
   if(option.id==='guanyuLane'){const hero=state.heroes.find(h=>h.id==='guanyu'),stack=hero?.guanyuLaneStacks||0;description=`当前：碰撞宽 ${30+10*stack}px / 减速 ${12*stack}%（0.8秒）；下阶：宽 +10px、减速 +12%（${stack+1}/2）`;}
   const button = document.createElement('button'); button.className = 'choice'; button.type = 'button'; button.style.setProperty('--card-color', data.color);
   button.innerHTML = `<span class="choice-icon">${choiceIconSvg(option.id)}</span><span><strong>${data.name}</strong><small>${description}</small></span><em class="choice-tag">${option.type === 'hero' ? '护卫' : data.tag}</em>`;
@@ -324,7 +343,7 @@ function makeChoice(option) {
 function choose(option) {
   const wasLevelChoice = state.modalKind === 'level';
   const isOpeningDraft = state.wave === 0 && state.kills === 0 && !state.spawnQueue.length && !state.enemies.length;
-  if (option.type === 'hero') { state.heroes.push({ id: option.id, cooldown: .25 + Math.random() * .3, laserTimer: .1, laserUlt: 0, laserTarget: null, laserHits: 0, laserLensStacks: 0, laserScanStacks: 0, laserLock:false, laserOverdriveStacks: 0, princessForgeStacks:0, princessVolleyStacks:0, princessStayStacks:0, princessThreadStacks:0, returnCast:0, returnCounts:new Map(), arthurMarkStacks:0,arthurEdgeStacks:0,arthurGuardStacks:0,arthurRevengeStacks:0, guanyuDamageStacks:0,guanyuLaneStacks:0,guanyuCargoStacks:0,guanyuFleetStacks:0,guanyuCastIndex:0,monkStrikeStacks:0,monkVerseStacks:0,monkCalmStacks:0,monkFieldStacks:0, energy: GAME_CONFIG.energy.initial, energyMax: GAME_CONFIG.energy.max, tapes: [], mods: defaultMods(), affixes:[] }); syncUltimateButtons(); }
+  if (option.type === 'hero') { if(!isFormalHeroId(option.id)||state.heroes.length>=3||state.heroes.some(hero=>hero.id===option.id))return;state.heroes.push({ id: option.id, cooldown: .25 + Math.random() * .3, laserTimer: .1, laserUlt: 0, laserTarget: null, laserHits: 0, laserLensStacks: 0, laserScanStacks: 0, laserLock:false, laserOverdriveStacks: 0, princessForgeStacks:0, princessVolleyStacks:0, princessStayStacks:0, princessThreadStacks:0, returnCast:0, returnCounts:new Map(), arthurMarkStacks:0,arthurEdgeStacks:0,arthurGuardStacks:0,arthurRevengeStacks:0, guanyuDamageStacks:0,guanyuLaneStacks:0,guanyuCargoStacks:0,guanyuFleetStacks:0,guanyuCastIndex:0,monkStrikeStacks:0,monkVerseStacks:0,monkCalmStacks:0,monkFieldStacks:0, energy: GAME_CONFIG.energy.initial, energyMax: GAME_CONFIG.energy.max, tapes: [], mods: defaultMods(), affixes:[] }); syncUltimateButtons(); }
   else GAME_CONFIG.upgrades[option.id].apply(state);
   ui.modal.classList.add('hidden');
   state.modalKind = null;
